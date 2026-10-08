@@ -1,0 +1,37 @@
+---
+# ==============================================================================
+# Playbook 3: Jinja2 Templates and Handlers Practice
+# Command to run: ansible-playbook playbooks/03_handlers_and_templates.yml
+# ==============================================================================
+- name: Learn Templates and Service Handlers
+  hosts: local
+  gather_facts: false
+
+  vars:
+    db_listen_ip: "127.0.0.1"
+    db_listen_port: 27017
+    repl_set_name: "rs-practice-01"
+    max_conns: 5000
+    cache_mb: 2048
+
+  tasks:
+    - name: Generate configuration file from Jinja2 template
+      ansible.builtin.template:
+        src: templates/test_app.conf.j2
+        dest: /tmp/db_house_lab/app.conf
+        mode: '0644'
+      notify: Restart Simulated Service  # Triggered only when the destination file changes
+
+    - name: Read rendered configuration content
+      ansible.builtin.command: cat /tmp/db_house_lab/app.conf
+      register: conf_content
+      changed_when: false
+
+    - name: Display rendered configuration content
+      ansible.builtin.debug:
+        msg: "{{ conf_content.stdout_lines }}"
+
+  handlers:
+    - name: Restart Simulated Service
+      ansible.builtin.debug:
+        msg: "[HANDLER TRIGGERED] Configuration changed! Safely restarting simulated service..."

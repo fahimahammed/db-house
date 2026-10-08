@@ -1,0 +1,11 @@
+# Dynamic Configuration Template (Jinja2)
+# Managed by: Ansible Automation
+
+[database]
+host = {{ db_listen_ip }}
+port = {{ db_listen_port }}
+replica_set = {{ repl_set_name }}
+
+[performance]
+max_connections = {{ max_conns }}
+cache_size_mb = {{ cache_mb }}

@@ -1,0 +1,37 @@
+---
+# ==============================================================================
+# Playbook 1: Basic Playbook Structure & Task Execution
+# Command to run: ansible-playbook playbooks/01_hello_world.yml
+# ==============================================================================
+- name: Basic Ansible Local Test Playbook
+  hosts: local
+  gather_facts: false
+
+  tasks:
+    - name: Task 1 - Print welcome message
+      ansible.builtin.debug:
+        msg: "Welcome to Ansible! Your first playbook executed successfully."
+
+    - name: Task 2 - Ensure practice directory exists (Idempotent Test)
+      ansible.builtin.file:
+        path: "/tmp/ansible_practice_folder"
+        state: directory
+        mode: '0755'
+
+    - name: Task 3 - Write sample content into file
+      ansible.builtin.copy:
+        content: |
+          Hello from Ansible!
+          Managed by: Local Control Node
+          Generated at: {{ lookup('pipe', 'date') }}
+        dest: "/tmp/ansible_practice_folder/welcome.txt"
+        mode: '0644'
+
+    - name: Task 4 - Read file content from disk
+      ansible.builtin.command: cat /tmp/ansible_practice_folder/welcome.txt
+      register: file_output
+      changed_when: false
+
+    - name: Task 5 - Display read content in stdout
+      ansible.builtin.debug:
+        msg: "{{ file_output.stdout_lines }}"

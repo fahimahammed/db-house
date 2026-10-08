@@ -1,0 +1,48 @@
+---
+# ==============================================================================
+# Playbook 2: Variables, System Facts, and Loops Practice
+# Command to run: ansible-playbook playbooks/02_variables_and_facts.yml
+# ==============================================================================
+- name: Learn Variables, Facts, and Loops
+  hosts: local
+  gather_facts: true  # Gathers OS distribution, CPU, memory, IP automatically
+
+  vars:
+    project_name: "db-house"
+    db_engine: "MongoDB"
+    default_port: 27017
+    database_users:
+      - name: "app_user"
+        role: "readWrite"
+      - name: "backup_agent"
+        role: "backup"
+      - name: "monitor_agent"
+        role: "clusterMonitor"
+
+  tasks:
+    - name: Display machine hardware and OS facts
+      ansible.builtin.debug:
+        msg:
+          - "Operating System: {{ ansible_distribution | default(ansible_os_family) }}"
+          - "Kernel Version: {{ ansible_kernel | default('N/A') }}"
+          - "Architecture: {{ ansible_architecture | default('N/A') }}"
+
+    - name: Display defined configuration variables
+      ansible.builtin.debug:
+        msg: "Project: {{ project_name }} | Engine: {{ db_engine }} | Port: {{ default_port }}"
+
+    - name: Ensure required project directories exist using loop
+      ansible.builtin.file:
+        path: "/tmp/db_house_lab/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "data"
+        - "logs"
+        - "backups"
+        - "certs"
+
+    - name: Print configured database users and assigned roles
+      ansible.builtin.debug:
+        msg: "User: {{ item.name }} -> Role: {{ item.role }}"
+      loop: "{{ database_users }}"
