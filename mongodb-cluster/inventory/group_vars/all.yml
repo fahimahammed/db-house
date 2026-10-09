@@ -1,0 +1,44 @@
+---
+# ==============================================================================
+# Global Cluster Configuration Variables
+# ==============================================================================
+
+# MongoDB Version Selection:
+# MongoDB 8.0 is the current latest, so choosing "7.0" (or "6.0") meets the
+# requirement to use a reliable previous stable enterprise release.
+mongo_version: "7.0"
+# Options: "7.0" (default) or "6.0"
+
+# Replica Set Name
+mongo_replset_name: "rs-prod-01"
+
+# Network & Ports
+mongo_port: 27017
+mongo_bind_ip: "0.0.0.0"
+
+# Filesystem Paths
+mongo_data_dir: "/var/lib/mongodb"
+mongo_log_dir: "/var/log/mongodb"
+mongo_conf_path: "/etc/mongod.conf"
+mongo_keyfile_dir: "/etc/mongodb"
+mongo_keyfile_path: "/etc/mongodb/mongo-keyfile"
+
+# WiredTiger Engine Tuning (GB)
+# For a lab VPS with 2GB - 4GB RAM, 1 GB cache is optimal.
+# For production nodes with 32GB RAM, set to 15.
+mongo_wiredtiger_cache_gb: 1
+
+# Oplog Size in Megabytes (5120 MB = 5 GB; in large prod use 50000+)
+mongo_oplog_size_mb: 5120
+
+# Cluster Security & RBAC Credentials
+mongo_auth_enabled: true
+mongo_admin_user: "clusterAdmin"
+mongo_admin_password: "ClusterAdminSecret2026!"
+mongo_app_user: "appUser"
+mongo_app_password: "AppUserSecret2026!"
+mongo_app_db: "ecommerce_db"
+
+# Local keyfile storage path on Ansible Controller (for cluster sync)
+local_keyfile_path: "{{ playbook_dir }}/../security/mongo-keyfile"
+

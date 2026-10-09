@@ -1,0 +1,48 @@
+# ==============================================================================
+# /etc/mongod.conf - Production Tuned Configuration
+# Managed by Ansible - Do NOT edit manually
+# ==============================================================================
+
+systemLog:
+  destination: file
+  logAppend: true
+  path: {{ mongo_log_dir }}/mongod.log
+  logRotate: reopen
+
+storage:
+  dbPath: {{ mongo_data_dir }}
+  journal:
+    enabled: true
+  wiredTiger:
+    engineConfig:
+      cacheSizeGB: {{ mongo_wiredtiger_cache_gb }}
+      journalCompressor: snappy
+      directoryForIndexes: true
+    collectionConfig:
+      blockCompressor: snappy
+    indexConfig:
+      prefixCompression: true
+
+processManagement:
+  timeZoneInfo: /usr/share/zoneinfo
+  fork: false
+  pidFilePath: /var/run/mongodb/mongod.pid
+
+net:
+  port: {{ mongo_port }}
+  bindIp: {{ mongo_bind_ip }}
+  maxIncomingConnections: 64000
+
+security:
+  authorization: enabled
+  keyFile: {{ mongo_keyfile_path }}
+
+replication:
+  replSetName: "{{ mongo_replset_name }}"
+  oplogSizeMB: {{ mongo_oplog_size_mb }}
+
+operationProfiling:
+  mode: slowOp
+  slowOpThresholdMs: 100
+  rateLimit: 100
+

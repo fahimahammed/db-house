@@ -1,0 +1,108 @@
+---
+- name: "Phase 4 - Initialize Replica Set Cluster & Provision Admin/App Users"
+  hosts: mongodb_primary
+  become: true
+  tasks:
+    - name: Check replica set initialization status
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} --quiet --eval "try { rs.status().ok } catch(e) { 0 }"
+      register: rs_status_raw
+      changed_when: false
+      failed_when: false
+
+    - name: Initiate MongoDB Replica Set with mongo-01 as initial member
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} --quiet --eval '
+          rs.initiate({
+            _id: "{{ mongo_replset_name }}",
+            members: [
+              { _id: 0, host: "{{ ansible_host }}:{{ mongo_port }}", priority: {{ mongo_priority | default(2) }} }
+            ]
+          })
+        '
+      when: "'1' not in rs_status_raw.stdout"
+
+    - name: Wait for mongo-01 to elect itself as PRIMARY
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} --quiet --eval "rs.isMaster().ismaster"
+      register: wait_primary
+      until: wait_primary.stdout.find('true') != -1
+      retries: 30
+      delay: 2
+      changed_when: false
+
+    - name: Create Cluster Administrator User (clusterAdmin)
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin --quiet --eval '
+          if (!db.getUser("{{ mongo_admin_user }}")) {
+            db.createUser({
+              user: "{{ mongo_admin_user }}",
+              pwd: "{{ mongo_admin_password }}",
+              roles: [
+                { role: "root", db: "admin" },
+                { role: "clusterAdmin", db: "admin" },
+                { role: "userAdminAnyDatabase", db: "admin" }
+              ]
+            });
+            print("USER_CREATED");
+          } else {
+            print("USER_EXISTS");
+          }
+        '
+      register: create_admin_out
+      changed_when: "'USER_CREATED' in create_admin_out.stdout"
+
+    - name: Create Application User on {{ mongo_app_db }}
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          db.getSiblingDB("{{ mongo_app_db }}").createUser({
+            user: "{{ mongo_app_user }}",
+            pwd: "{{ mongo_app_password }}",
+            roles: [
+              { role: "readWrite", db: "{{ mongo_app_db }}" }
+            ]
+          });
+        '
+      register: create_app_user_out
+      failed_when: false
+      changed_when: "'Successfully added user' in create_app_user_out.stdout or create_app_user_out.rc == 0"
+
+    - name: Add Secondary Nodes to Replica Set
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          let currentMembers = rs.status().members.map(m => m.name);
+          let targetHost = "{{ hostvars[item].ansible_host }}:{{ mongo_port }}";
+          if (!currentMembers.includes(targetHost)) {
+            rs.add({
+              _id: {{ hostvars[item].mongo_member_id }},
+              host: targetHost,
+              priority: {{ hostvars[item].mongo_priority | default(1) }},
+              votes: {{ hostvars[item].mongo_votes | default(1) }}
+            });
+            print("ADDED " + targetHost);
+          } else {
+            print("ALREADY_PRESENT " + targetHost);
+          }
+        '
+      loop: "{{ groups['mongodb_secondary'] }}"
+      register: add_nodes_res
+      changed_when: "'ADDED' in add_nodes_res.stdout"
+
+    - name: Pause 10 seconds for initial quorum and synchronization
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Verify Cluster Status (rs.status())
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --eval '
+          print("Replica Set Name: " + rs.status().set);
+          rs.status().members.forEach(m => {
+            print("Node: " + m.name + " | State: " + m.stateStr + " | Health: " + m.health);
+          });
+        '
+      register: cluster_summary
+      changed_when: false
+
+    - name: Display Cluster Health Summary
+      ansible.builtin.debug:
+        msg: "{{ cluster_summary.stdout_lines }}"

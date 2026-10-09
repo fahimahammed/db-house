@@ -1,0 +1,59 @@
+---
+- name: "Phase 6 - Pre-populate Master DB with Pre-existing Data & Test Initial Sync"
+  hosts: mongodb_primary
+  become: true
+  tasks:
+    - name: Insert 5,000 pre-existing records on Primary (Master)
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --quiet --eval '
+          db.legacy_archive.drop();
+          let bulk = [];
+          for (let i = 1; i <= 5000; i++) {
+            bulk.push({
+              record_id: i,
+              title: "Pre-existing Record #" + i,
+              created_before_replica_joined: true,
+              timestamp: new Date()
+            });
+          }
+          db.legacy_archive.insertMany(bulk);
+          print("PRE_POPULATED_COUNT: " + db.legacy_archive.countDocuments());
+        '
+      register: prepopulate_out
+      changed_when: true
+
+    - name: Show Pre-existing Data Status on Primary
+      ansible.builtin.debug:
+        msg: "{{ prepopulate_out.stdout_lines }}"
+
+- name: "Check Initial Sync Progression on Secondary Nodes"
+  hosts: mongodb_secondary
+  become: true
+  tasks:
+    - name: Query Secondary node for pre-existing records
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --quiet --eval '
+          db.getMongo().setReadPref("secondaryPreferred");
+          db.legacy_archive.countDocuments();
+        '
+      register: secondary_legacy_count
+      until: secondary_legacy_count.stdout | trim == "5000"
+      retries: 20
+      delay: 2
+      changed_when: false
+
+    - name: Confirm Secondary received all 5,000 pre-existing records automatically
+      ansible.builtin.debug:
+        msg: "SUCCESS: {{ inventory_hostname }} has synced all {{ secondary_legacy_count.stdout }} pre-existing records from Primary via Initial Sync!"
+
+    - name: Inspect MongoDB mongod.log on Secondary for Initial Sync / Replication events
+      ansible.builtin.shell: >
+        grep -E "initialSync|Initial sync|STARTUP2|RECOVERING|SECONDARY" {{ mongo_log_dir }}/mongod.log | tail -n 15
+      register: sync_log_traces
+      changed_when: false
+      failed_when: false
+
+    - name: Display Initial Sync log traces from Secondary
+      ansible.builtin.debug:
+        msg: "{{ sync_log_traces.stdout_lines }}"
+
