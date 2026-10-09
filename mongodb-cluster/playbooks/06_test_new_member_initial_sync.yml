@@ -5,7 +5,7 @@
   tasks:
     - name: Insert 5,000 pre-existing records on Primary (Master)
       ansible.builtin.shell: >
-        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --quiet --eval '
+        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --authenticationDatabase "{{ mongo_app_db }}" --quiet --eval '
           db.legacy_archive.drop();
           let bulk = [];
           for (let i = 1; i <= 5000; i++) {
@@ -30,9 +30,18 @@
   hosts: mongodb_secondary
   become: "{{ ansible_user | default('ubuntu') != 'root' }}"
   tasks:
+    - name: Wait for Secondary node to reach SECONDARY state
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} --quiet --eval "try { db.hello().secondary } catch(e) { false }"
+      register: sec_state
+      until: sec_state.stdout.find('true') != -1
+      retries: 30
+      delay: 3
+      changed_when: false
+
     - name: Query Secondary node for pre-existing records
       ansible.builtin.shell: >
-        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --quiet --eval '
+        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --authenticationDatabase "{{ mongo_app_db }}" --quiet --eval '
           db.getMongo().setReadPref("secondaryPreferred");
           db.legacy_archive.countDocuments();
         '
@@ -56,4 +65,3 @@
     - name: Display Initial Sync log traces from Secondary
       ansible.builtin.debug:
         msg: "{{ sync_log_traces.stdout_lines }}"
-

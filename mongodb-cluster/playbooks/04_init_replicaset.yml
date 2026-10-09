@@ -24,7 +24,7 @@
 
     - name: Wait for mongo-01 to elect itself as PRIMARY
       ansible.builtin.shell: >
-        mongosh --port {{ mongo_port }} --quiet --eval "rs.isMaster().ismaster"
+        mongosh --port {{ mongo_port }} --quiet --eval "try { rs.isMaster().ismaster } catch(e) { false }"
       register: wait_primary
       until: wait_primary.stdout.find('true') != -1
       retries: 30
@@ -34,7 +34,15 @@
     - name: Create Cluster Administrator User (clusterAdmin)
       ansible.builtin.shell: >
         mongosh --port {{ mongo_port }} admin --quiet --eval '
-          if (!db.getUser("{{ mongo_admin_user }}")) {
+          try {
+            let res = db.auth("{{ mongo_admin_user }}", "{{ mongo_admin_password }}");
+            if (res && res.ok === 1) {
+              print("USER_EXISTS");
+              quit(0);
+            }
+          } catch(e) {}
+
+          try {
             db.createUser({
               user: "{{ mongo_admin_user }}",
               pwd: "{{ mongo_admin_password }}",
@@ -45,8 +53,12 @@
               ]
             });
             print("USER_CREATED");
-          } else {
-            print("USER_EXISTS");
+          } catch(err) {
+            if (err.message && err.message.includes("already exists")) {
+              print("USER_EXISTS");
+            } else {
+              throw err;
+            }
           }
         '
       register: create_admin_out
@@ -55,17 +67,26 @@
     - name: Create Application User on {{ mongo_app_db }}
       ansible.builtin.shell: >
         mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
-          db.getSiblingDB("{{ mongo_app_db }}").createUser({
-            user: "{{ mongo_app_user }}",
-            pwd: "{{ mongo_app_password }}",
-            roles: [
-              { role: "readWrite", db: "{{ mongo_app_db }}" }
-            ]
-          });
+          let appDb = db.getSiblingDB("{{ mongo_app_db }}");
+          try {
+            appDb.createUser({
+              user: "{{ mongo_app_user }}",
+              pwd: "{{ mongo_app_password }}",
+              roles: [
+                { role: "readWrite", db: "{{ mongo_app_db }}" }
+              ]
+            });
+            print("APP_USER_CREATED");
+          } catch(e) {
+            if (e.message && e.message.includes("already exists")) {
+              print("APP_USER_EXISTS");
+            } else {
+              throw e;
+            }
+          }
         '
       register: create_app_user_out
-      failed_when: false
-      changed_when: "'Successfully added user' in create_app_user_out.stdout or create_app_user_out.rc == 0"
+      changed_when: "'APP_USER_CREATED' in create_app_user_out.stdout"
 
     - name: Add Secondary Nodes to Replica Set
       ansible.builtin.shell: >
@@ -95,9 +116,10 @@
     - name: Verify Cluster Status (rs.status())
       ansible.builtin.shell: >
         mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --eval '
-          print("Replica Set Name: " + rs.status().set);
+          print("\nReplica Set Name: " + rs.status().set);
+          print("Cluster Members:");
           rs.status().members.forEach(m => {
-            print("Node: " + m.name + " | State: " + m.stateStr + " | Health: " + m.health);
+            print("  -> Node: " + m.name + " | State: " + m.stateStr + " | Health: " + m.health);
           });
         '
       register: cluster_summary

@@ -43,6 +43,17 @@
         group: mongodb
         mode: '0400'
 
+    - name: Ensure MongoDB data and log directories exist with correct ownership
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: mongodb
+        group: mongodb
+        mode: '0755'
+      loop:
+        - "{{ mongo_data_dir }}"
+        - "{{ mongo_log_dir }}"
+
     - name: Deploy tuned mongod.conf configuration
       ansible.builtin.template:
         src: "{{ playbook_dir }}/../templates/mongod.conf.j2"
@@ -50,23 +61,40 @@
         owner: root
         group: root
         mode: '0644'
-      notify: Restart mongod
 
-    - name: Ensure mongod service is started and enabled
+    - name: Restart and enable mongod service
       ansible.builtin.systemd:
         name: mongod
-        state: started
+        state: restarted
         enabled: true
 
     - name: Wait for MongoDB port {{ mongo_port }} to become available
       ansible.builtin.wait_for:
         port: "{{ mongo_port }}"
         host: "127.0.0.1"
-        timeout: 60
+        timeout: 30
+      register: wait_port_result
+      ignore_errors: true
 
-  handlers:
-    - name: Restart mongod
-      ansible.builtin.systemd:
-        name: mongod
-        state: restarted
+    - name: Inspect systemd status and logs if port failed to open
+      when: wait_port_result is failed
+      block:
+        - name: Check systemctl status mongod
+          ansible.builtin.command: systemctl status mongod --no-pager
+          register: systemd_status_out
+          failed_when: false
+          changed_when: false
 
+        - name: Check journalctl for mongod failure
+          ansible.builtin.command: journalctl -u mongod --no-pager -n 25
+          register: journal_out
+          failed_when: false
+          changed_when: false
+
+        - name: Fail and display startup logs
+          ansible.builtin.fail:
+            msg:
+              - "=== SYSTEMCTL STATUS ==="
+              - "{{ systemd_status_out.stdout_lines }}"
+              - "=== JOURNAL LOGS ==="
+              - "{{ journal_out.stdout_lines }}"

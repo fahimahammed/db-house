@@ -22,8 +22,12 @@
 
     - name: Determine apt repo distribution codename
       ansible.builtin.set_fact:
-        # If running on Ubuntu 24.04 (noble) with MongoDB 6.0 (which stopped at jammy), fallback to jammy
-        mongo_repo_codename: "{{ 'jammy' if (ansible_distribution_release == 'noble' and mongo_version == '6.0') else ansible_distribution_release }}"
+        mongo_repo_codename: "{{ ansible_distribution_release if ansible_distribution_release in ['jammy', 'focal'] else 'jammy' }}"
+
+    - name: Clean up any previous invalid mongodb repository list
+      ansible.builtin.file:
+        path: "/etc/apt/sources.list.d/mongodb-org-{{ mongo_version }}.list"
+        state: absent
 
     - name: Add official MongoDB apt repository
       ansible.builtin.apt_repository:

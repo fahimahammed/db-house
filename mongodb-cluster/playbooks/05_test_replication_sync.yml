@@ -9,7 +9,7 @@
 
     - name: Insert test document batch directly into Primary (mongo-01)
       ansible.builtin.shell: >
-        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --quiet --eval '
+        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --authenticationDatabase "{{ mongo_app_db }}" --quiet --eval '
           let batchId = "{{ sync_batch_id }}";
           let docs = [];
           for (let i = 1; i <= 50; i++) {
@@ -21,7 +21,7 @@
             });
           }
           let res = db.products.insertMany(docs);
-          print("INSERTED_COUNT: " + res.insertedIds ? 50 : 0);
+          print("INSERTED_COUNT: " + (res.insertedIds ? 50 : 0));
         '
       register: insert_res
       changed_when: true
@@ -36,7 +36,7 @@
 
     - name: Query document count from Primary
       ansible.builtin.shell: >
-        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --quiet --eval '
+        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --authenticationDatabase "{{ mongo_app_db }}" --quiet --eval '
           db.products.countDocuments({ batch: "{{ sync_batch_id }}" })
         '
       register: primary_count
@@ -45,21 +45,32 @@
 - name: "Verify Replicated Data on All Secondary Nodes"
   hosts: mongodb_secondary
   become: "{{ ansible_user | default('ubuntu') != 'root' }}"
+  vars:
+    primary_host_item: "{{ groups['mongodb_primary'][0] }}"
+    target_batch: "{{ hostvars[groups['mongodb_primary'][0]].sync_batch_id }}"
+    expected_count: "{{ hostvars[groups['mongodb_primary'][0]].primary_count.stdout | trim }}"
   tasks:
+    - name: Wait for Secondary node to complete Initial Sync and reach SECONDARY state
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} --quiet --eval "try { db.hello().secondary } catch(e) { false }"
+      register: sec_state
+      until: sec_state.stdout.find('true') != -1
+      retries: 30
+      delay: 3
+      changed_when: false
+
     - name: Query document count from Secondary local engine (readPreference=secondaryPreferred)
       ansible.builtin.shell: >
-        mongosh --port {{ mongo_port }} "{{ mongo_app_db }}" -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --quiet --eval '
-          db.getMongo().setReadPref("secondaryPreferred");
-          db.products.countDocuments({ batch: "{{ hostvars[groups[\"mongodb_primary\"][0]].sync_batch_id }}" })
-        '
+        mongosh --port {{ mongo_port }} {{ mongo_app_db }} -u "{{ mongo_app_user }}" -p "{{ mongo_app_password }}" --authenticationDatabase "{{ mongo_app_db }}" --quiet --eval
+        'db.getMongo().setReadPref("secondaryPreferred"); db.products.countDocuments({ batch: "{{ target_batch }}" })'
       register: secondary_count
       changed_when: false
 
     - name: Verify Secondary count matches Primary
       ansible.builtin.assert:
         that:
-          - secondary_count.stdout | trim == hostvars[groups['mongodb_primary'][0]].primary_count.stdout | trim
-        fail_msg: "Data Sync FAILED! Secondary has {{ secondary_count.stdout }} but Primary has {{ hostvars[groups['mongodb_primary'][0]].primary_count.stdout }}"
+          - secondary_count.stdout | trim == expected_count
+        fail_msg: "Data Sync FAILED! Secondary has {{ secondary_count.stdout }} but Primary has {{ expected_count }}"
         success_msg: "SYNC VERIFIED ON {{ inventory_hostname }}! Count: {{ secondary_count.stdout }} matches Primary exactly."
 
 - name: "Check Replication Oplog Lag"
@@ -77,4 +88,3 @@
     - name: Show Replication Lag Output
       ansible.builtin.debug:
         msg: "{{ repl_lag.stdout_lines }}"
-
