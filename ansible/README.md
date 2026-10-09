@@ -125,8 +125,12 @@ host_key_checking = False
 # কোনো টাস্ক ফেইল করলে অপ্রয়োজনীয় .retry ফাইল তৈরি না করা
 retry_files_enabled = False
 
-# টার্মিনালে আউটপুট পরিষ্কার ও কালারফুল YAML ফরম্যাটে দেখানো
-stdout_callback = yaml
+# টার্মিনালে আউটপুট পরিষ্কার ও কালারফুল YAML ফরম্যাটে দেখানো (Modern Ansible)
+stdout_callback = default
+
+[callback_default]
+result_format = yaml
+
 
 # টার্গেট সার্ভারে পাইথন পাথ স্বয়ংক্রিয়ভাবে খুঁজে নেওয়া
 interpreter_python = auto_silent

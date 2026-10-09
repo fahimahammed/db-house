@@ -1,0 +1,69 @@
+---
+# ==============================================================================
+# Playbook: Remote Server Maintenance & Tooling Setup
+# Target Group: mongodb_cluster (from inventory.ini)
+# Command to run:
+#   cd /Users/fahimahammedfiroz/Projects/db-house/ansible/lab-1
+#   ansible-playbook playbooks/hello.yml
+# ==============================================================================
+- name: Remote Server Safe Maintenance and Utility Setup
+  hosts: mongodb_cluster
+  become: true
+  gather_facts: true
+
+  vars:
+    # Safe utility packages that do not break or conflict with existing services
+    essential_packages:
+      - curl
+      - wget
+      - htop
+      - net-tools
+      - jq
+      - tree
+      - git
+      - ca-certificates
+
+  tasks:
+    - name: Task 1 - Display connected remote host telemetry
+      ansible.builtin.debug:
+        msg:
+          - "Host: {{ inventory_hostname }} ({{ ansible_host }})"
+          - "Operating System: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+          - "Kernel: {{ ansible_facts['kernel'] }}"
+          - "Architecture: {{ ansible_facts['architecture'] }}"
+          - "Available Memory: {{ ansible_facts['memtotal_mb'] }} MB"
+
+
+    - name: Task 2 - Update apt package repository cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      register: apt_update_result
+
+    - name: Task 3 - Safely upgrade installed packages (safe upgrade only)
+      ansible.builtin.apt:
+        upgrade: safe   # 'safe' prevents removing or breaking existing installed dependencies
+      register: apt_upgrade_result
+
+    - name: Task 4 - Install common safe system and monitoring utilities
+      ansible.builtin.apt:
+        name: "{{ essential_packages }}"
+        state: present
+
+    - name: Task 5 - Check current server uptime and load average
+      ansible.builtin.command: uptime
+      register: uptime_output
+      changed_when: false
+
+    - name: Task 6 - Check available disk space on root filesystem
+      ansible.builtin.command: df -h /
+      register: disk_output
+      changed_when: false
+
+    - name: Task 7 - Print execution summary
+      ansible.builtin.debug:
+        msg:
+          - "Status: Remote server maintenance completed successfully!"
+          - "Uptime: {{ uptime_output.stdout }}"
+          - "Disk Status: {{ disk_output.stdout_lines[1] }}"
+          - "Package Upgrades: {{ apt_upgrade_result.changed | default(false) }}"
