@@ -1,0 +1,12 @@
+{
+  "name": "mongodb-replica-test",
+  "version": "1.0.0",
+  "description": "Test script to verify Primary writes and Secondary reads via a single MongoDB replicaSet URL",
+  "main": "test-read-write.js",
+  "scripts": {
+    "start": "node test-read-write.js"
+  },
+  "dependencies": {
+    "mongodb": "^6.21.0"
+  }
+}

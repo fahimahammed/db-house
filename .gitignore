@@ -2,3 +2,4 @@ mongodb-cluster/keys/
 mongodb-cluster/security/
 *.pem
 *.key
+node_modules/
