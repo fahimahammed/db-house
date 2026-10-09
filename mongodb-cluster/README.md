@@ -36,7 +36,9 @@ ansible/mongodb-cluster/
 │   ├── 04_init_replicaset.yml           # রেপ্লিকাসেট ইনিশিয়েট ও সেকেন্ডারি যুক্তকরণ
 │   ├── 05_test_replication_sync.yml     # রিয়েল-টাইম ডেটা রেপ্লিকেশন টেস্ট
 │   ├── 06_test_new_member_initial_sync.yml # প্রি-এক্সিস্টিং ডেটা ও ইনিশিয়াল সিঙ্ক টেস্ট
-│   └── site.yml                         # মাস্টার প্লেবুক (০১ থেকে ০৪ এক ক্লিকে রান)
+│   ├── site.yml                         # মাস্টার প্লেবুক (০১ থেকে ০৪ এক ক্লিকে রান)
+│   ├── cleanup.yml                      # সম্পূর্ণ ক্লাস্টার ও ডেটা ক্লিন করার প্লেবুক
+│   └── 99_teardown_cluster.yml          # Teardown ও ফ্যাক্টরি রিসেট প্লেবুক
 ├── templates/
 │   └── mongod.conf.j2                   # প্রোডাকশন টিউনড mongod কনফিগারেশন টেমপ্লেট
 ├── scripts/
@@ -85,6 +87,12 @@ ansible-playbook playbooks/05_test_replication_sync.yml
 # মাস্টার ডিবিতে আগে থেকে ডেটা থাকলে কীভাবে সিঙ্ক হয় তা টেস্ট
 ansible-playbook playbooks/06_test_new_member_initial_sync.yml
 ```
+
+### ৫. সব কিছু মুছে আবার নতুন করে প্র্যাকটিস করতে চাইলে (Clean / Teardown):
+```bash
+ansible-playbook playbooks/cleanup.yml
+```
+*(এটি ৩টি VPS থেকেই সমস্ত MongoDB সার্ভিস, ডেটা ডিরেক্টরি, লগ, কি-ফাইল ও প্যাকেজ সম্পূর্ণ মুছে সার্ভারগুলোকে একদম আগের ফ্রেশ অবস্থায় ফিরিয়ে দেবে।)*
 
 ---
 

@@ -1,7 +1,7 @@
 ---
 - name: "Phase 6 - Pre-populate Master DB with Pre-existing Data & Test Initial Sync"
   hosts: mongodb_primary
-  become: true
+  become: "{{ ansible_user | default('ubuntu') != 'root' }}"
   tasks:
     - name: Insert 5,000 pre-existing records on Primary (Master)
       ansible.builtin.shell: >
@@ -28,7 +28,7 @@
 
 - name: "Check Initial Sync Progression on Secondary Nodes"
   hosts: mongodb_secondary
-  become: true
+  become: "{{ ansible_user | default('ubuntu') != 'root' }}"
   tasks:
     - name: Query Secondary node for pre-existing records
       ansible.builtin.shell: >

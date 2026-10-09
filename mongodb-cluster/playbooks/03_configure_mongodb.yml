@@ -25,7 +25,7 @@
 
 - name: "Phase 3.2 - Configure MongoDB & Distribute Keyfile to All Nodes"
   hosts: mongodb_cluster
-  become: true
+  become: "{{ ansible_user | default('ubuntu') != 'root' }}"
   tasks:
     - name: Ensure MongoDB configuration & keyfile directory exists
       ansible.builtin.file:

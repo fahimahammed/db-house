@@ -1,0 +1,4 @@
+---
+# Alias for 99_teardown_cluster.yml
+- import_playbook: 99_teardown_cluster.yml
+

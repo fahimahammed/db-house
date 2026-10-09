@@ -1,7 +1,7 @@
 ---
 - name: "Phase 4 - Initialize Replica Set Cluster & Provision Admin/App Users"
   hosts: mongodb_primary
-  become: true
+  become: "{{ ansible_user | default('ubuntu') != 'root' }}"
   tasks:
     - name: Check replica set initialization status
       ansible.builtin.shell: >

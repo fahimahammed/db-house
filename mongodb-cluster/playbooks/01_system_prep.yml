@@ -1,7 +1,7 @@
 ---
 - name: "Phase 1 - OS Hardening, Kernel Tuning & System Prerequisites"
   hosts: mongodb_cluster
-  become: true
+  become: "{{ ansible_user | default('ubuntu') != 'root' }}"
   tasks:
     - name: Update apt cache
       ansible.builtin.apt:

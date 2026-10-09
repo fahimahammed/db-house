@@ -1,0 +1,104 @@
+---
+# ==============================================================================
+# Playbook: 99_teardown_cluster.yml (or cleanup.yml)
+# Purpose: Complete teardown and reset of all MongoDB cluster installations,
+#          data directories, configurations, sysctl, and systemd services.
+# ==============================================================================
+
+- name: "Teardown & Clean All MongoDB Nodes (VPS 1, 2, 3)"
+  hosts: mongodb_cluster
+  become: "{{ ansible_user | default('ubuntu') != 'root' }}"
+  tasks:
+    - name: 1. Stop and disable mongod service if running
+      ansible.builtin.systemd:
+        name: mongod
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: 2. Stop and disable THP service
+      ansible.builtin.systemd:
+        name: disable-thp.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: 3. Remove disable-thp systemd service file
+      ansible.builtin.file:
+        path: /etc/systemd/system/disable-thp.service
+        state: absent
+
+    - name: 4. Unhold pinned MongoDB packages
+      ansible.builtin.shell: >
+        apt-mark unhold mongodb-org mongodb-org-server mongodb-org-mongos mongodb-org-tools mongodb-mongosh 2>/dev/null || true
+      changed_when: false
+
+    - name: 5. Purge all MongoDB packages
+      ansible.builtin.apt:
+        name:
+          - mongodb-org
+          - mongodb-org-server
+          - mongodb-org-mongos
+          - mongodb-org-tools
+          - mongodb-mongosh
+        state: absent
+        purge: true
+      failed_when: false
+
+    - name: 6. Remove MongoDB apt repository and keyring files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/etc/apt/sources.list.d/mongodb-org-{{ mongo_version | default('7.0') }}.list"
+        - "/etc/apt/keyrings/mongodb-server-{{ mongo_version | default('7.0') }}.gpg"
+        - "/tmp/mongodb-{{ mongo_version | default('7.0') }}.asc"
+
+    - name: 7. Delete all MongoDB data, logs, keyfiles, and configuration files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ mongo_data_dir | default('/var/lib/mongodb') }}"
+        - "{{ mongo_log_dir | default('/var/log/mongodb') }}"
+        - "{{ mongo_keyfile_dir | default('/etc/mongodb') }}"
+        - "{{ mongo_conf_path | default('/etc/mongod.conf') }}"
+        - /var/run/mongodb
+
+    - name: 8. Remove custom MongoDB sysctl and limits configurations
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/sysctl.d/99-mongodb.conf
+        - /etc/security/limits.d/99-mongodb.conf
+
+    - name: 9. Reload systemd daemon and sysctl settings
+      ansible.builtin.shell: |
+        systemctl daemon-reload
+        sysctl --system
+      changed_when: false
+
+    - name: 10. Autoremove unused dependencies
+      ansible.builtin.apt:
+        autoremove: true
+        clean: true
+      failed_when: false
+
+    - name: Cluster node cleanup complete notification
+      ansible.builtin.debug:
+        msg: "✅ Server {{ inventory_hostname }} is now completely clean and reset!"
+
+- name: "Clean Local Controller Security Artifacts"
+  hosts: localhost
+  connection: local
+  tasks:
+    - name: Remove generated local keyfile
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../security/mongo-keyfile"
+        state: absent
+
+    - name: Final confirmation
+      ansible.builtin.debug:
+        msg: "🎉 ALL 3 VPS nodes and local cluster keys have been completely wiped! Ready for a fresh practice run."
+

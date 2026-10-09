@@ -1,7 +1,7 @@
 ---
 - name: "Phase 5 - Verify Continuous Data Replication from Primary to Secondaries"
   hosts: mongodb_primary
-  become: true
+  become: "{{ ansible_user | default('ubuntu') != 'root' }}"
   tasks:
     - name: Generate timestamp identifier for verification batch
       ansible.builtin.set_fact:
@@ -44,7 +44,7 @@
 
 - name: "Verify Replicated Data on All Secondary Nodes"
   hosts: mongodb_secondary
-  become: true
+  become: "{{ ansible_user | default('ubuntu') != 'root' }}"
   tasks:
     - name: Query document count from Secondary local engine (readPreference=secondaryPreferred)
       ansible.builtin.shell: >
@@ -64,7 +64,7 @@
 
 - name: "Check Replication Oplog Lag"
   hosts: mongodb_primary
-  become: true
+  become: "{{ ansible_user | default('ubuntu') != 'root' }}"
   tasks:
     - name: Print secondary replication info
       ansible.builtin.shell: >
