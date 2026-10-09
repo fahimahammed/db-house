@@ -54,16 +54,19 @@
       ansible.builtin.command: uptime
       register: uptime_output
       changed_when: false
+      check_mode: false  # Allows read-only command to run even during --check dry-run
 
     - name: Task 6 - Check available disk space on root filesystem
       ansible.builtin.command: df -h /
       register: disk_output
       changed_when: false
+      check_mode: false  # Allows read-only command to run even during --check dry-run
 
     - name: Task 7 - Print execution summary
       ansible.builtin.debug:
         msg:
           - "Status: Remote server maintenance completed successfully!"
-          - "Uptime: {{ uptime_output.stdout }}"
-          - "Disk Status: {{ disk_output.stdout_lines[1] }}"
-          - "Package Upgrades: {{ apt_upgrade_result.changed | default(false) }}"
+          - "Uptime: {{ uptime_output.stdout | default('Skipped in check mode') }}"
+          - "Disk Status: {{ disk_output.stdout_lines[1] | default('Skipped in check mode') }}"
+          - "Package Upgrades Needed: {{ apt_upgrade_result.changed | default(false) }}"
+
