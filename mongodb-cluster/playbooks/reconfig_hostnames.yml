@@ -1,0 +1,47 @@
+---
+- name: "Configure Cluster Hostname Resolution on All Nodes"
+  hosts: mongodb_cluster
+  become: true
+  tasks:
+    - name: Add cluster hostnames to /etc/hosts on each node
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        block: |
+          {{ hostvars['mongo-01'].private_ip }} mongo-01
+          {{ hostvars['mongo-02'].private_ip }} mongo-02
+          {{ hostvars['mongo-03'].private_ip }} mongo-03
+        marker: "# {mark} ANSIBLE MANAGED MONGODB HOSTS"
+
+- name: "Reconfigure Replica Set Members with Hostnames"
+  hosts: mongodb_primary
+  become: true
+  tasks:
+    - name: Update Replica Set configuration to use hostnames (mongo-01, mongo-02, mongo-03)
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          let cfg = rs.conf();
+          cfg.members.forEach(m => {
+            if (m._id === 0) m.host = "mongo-01:{{ mongo_port }}";
+            if (m._id === 1) m.host = "mongo-02:{{ mongo_port }}";
+            if (m._id === 2) m.host = "mongo-03:{{ mongo_port }}";
+          });
+          rs.reconfig(cfg);
+        '
+      register: reconfig_res
+      changed_when: true
+
+    - name: Pause 5 seconds for reconfig propagation
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Verify Cluster Status
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          rs.status().members.map(m => m.name + " (" + m.stateStr + ")")
+        '
+      register: final_members
+
+    - name: Print New Replica Set Members
+      ansible.builtin.debug:
+        msg: "{{ final_members.stdout_lines }}"
+
