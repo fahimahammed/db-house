@@ -60,7 +60,7 @@ sec_group = aws.ec2.SecurityGroup(
             protocol="tcp",
             from_port=27017,
             to_port=27017,
-            cidr_blocks=["10.0.0.0/16"],
+            cidr_blocks=["0.0.0.0/0"],
         )
     ],
     egress=[

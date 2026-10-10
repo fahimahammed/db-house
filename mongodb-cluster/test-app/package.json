@@ -4,7 +4,9 @@
   "description": "Test script to verify Primary writes and Secondary reads via a single MongoDB replicaSet URL",
   "main": "test-read-write.js",
   "scripts": {
-    "start": "node test-read-write.js"
+    "start": "node test-read-write.js",
+    "writer": "node writer.js",
+    "reader": "node reader.js"
   },
   "dependencies": {
     "mongodb": "^6.21.0"

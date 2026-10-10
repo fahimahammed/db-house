@@ -10,16 +10,17 @@
 
 const { MongoClient } = require('mongodb');
 
-// 🔑 THE SINGLE CONNECTION URL
-const uri = "mongodb://appUser:AppUserSecret2026!@157.180.74.152:27017,167.233.197.173:27017/ecommerce_db?replicaSet=rs-prod-01&authSource=ecommerce_db&readPreference=secondaryPreferred";
+// 🔑 THE SINGLE CONNECTION URL (Uses Private IPs inside VPC or updated hostnames)
+const uri = process.env.MONGO_URI || "mongodb://appUser:AppUserSecret2026!@10.0.1.30:27017,10.0.2.51:27017,10.0.3.43:27017/ecommerce_db?replicaSet=rs-prod-01&authSource=ecommerce_db&readPreference=secondaryPreferred";
 
 // Known server roles for clear output
-const PRIMARY_IP = "157.180.74.152";
-const SECONDARY_IP = "167.233.197.173";
+const PRIMARY_IP = "10.0.1.30";
+const SECONDARY_IPS = ["10.0.2.51", "10.0.3.43"];
 
 function identifyServer(address) {
   if (address.includes(PRIMARY_IP)) return "PRIMARY (mongo-01)";
-  if (address.includes(SECONDARY_IP)) return "SECONDARY (mongo-02)";
+  if (address.includes("10.0.2.51")) return "SECONDARY (mongo-02)";
+  if (address.includes("10.0.3.43")) return "SECONDARY (mongo-03)";
   return "UNKNOWN";
 }
 

@@ -4,3 +4,4 @@ mongodb-cluster/security/
 *.key
 node_modules/
 venv/
+.env
