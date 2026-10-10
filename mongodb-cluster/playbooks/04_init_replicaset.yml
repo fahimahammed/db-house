@@ -16,7 +16,7 @@
           rs.initiate({
             _id: "{{ mongo_replset_name }}",
             members: [
-              { _id: 0, host: "{{ ansible_host }}:{{ mongo_port }}", priority: {{ mongo_priority | default(2) }} }
+              { _id: 0, host: "{{ private_ip | default(ansible_host) }}:{{ mongo_port }}", priority: {{ mongo_priority | default(2) }} }
             ]
           })
         '
@@ -92,7 +92,7 @@
       ansible.builtin.shell: >
         mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
           let currentMembers = rs.status().members.map(m => m.name);
-          let targetHost = "{{ hostvars[item].ansible_host }}:{{ mongo_port }}";
+          let targetHost = "{{ hostvars[item].private_ip | default(hostvars[item].ansible_host) }}:{{ mongo_port }}";
           if (!currentMembers.includes(targetHost)) {
             rs.add({
               _id: {{ hostvars[item].mongo_member_id }},
