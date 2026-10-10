@@ -55,6 +55,13 @@ sec_group = aws.ec2.SecurityGroup(
             to_port=80,
             cidr_blocks=["0.0.0.0/0"],
         ),
+        # Allow MongoDB traffic within the VPC
+        aws.ec2.SecurityGroupIngressArgs(
+            protocol="tcp",
+            from_port=27017,
+            to_port=27017,
+            cidr_blocks=["10.0.0.0/16"],
+        )
     ],
     egress=[
         aws.ec2.SecurityGroupEgressArgs(
