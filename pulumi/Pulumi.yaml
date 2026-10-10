@@ -1,0 +1,7 @@
+name: pulumi-aws-vpc-ec2
+runtime:
+  name: python
+  options:
+    virtualenv: venv
+description: A Pulumi program deploying a VPC, IGW, Route Table, and 3 EC2 instances across 3 subnets.
+

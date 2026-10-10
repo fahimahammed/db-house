@@ -3,3 +3,4 @@ mongodb-cluster/security/
 *.pem
 *.key
 node_modules/
+venv/
