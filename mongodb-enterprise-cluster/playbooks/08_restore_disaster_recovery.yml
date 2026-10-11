@@ -1,5 +1,42 @@
 ---
-- name: "Phase 8 - Disaster Recovery & Point-In-Time Restore"
+# ==============================================================================
+# Playbook: 08_restore_disaster_recovery.yml
+# Purpose: Disaster Recovery & Point-In-Time Restore (PITR) with Oplog Replay.
+#          Locates latest backup on Secondary node, transfers it securely via
+#          Ansible Controller to Primary, verifies SHA256, and restores data.
+# ==============================================================================
+
+- name: "Phase 8.1 - Locate and Fetch Latest Backup Archive from Backup Node"
+  hosts: "{{ backup_target_node | default(groups['mongodb_secondary'][0]) }}"
+  become: true
+  tasks:
+    - name: Find latest backup archive on designated backup node
+      ansible.builtin.shell: ls -t {{ backup_dir }}/mongo_backup_*.archive.gz 2>/dev/null | head -n 1
+      register: sec_archive_out
+      changed_when: false
+
+    - name: Set discovered archive fact on controller
+      ansible.builtin.set_fact:
+        discovered_archive_name: "{{ sec_archive_out.stdout | basename }}"
+      delegate_to: localhost
+      delegate_facts: true
+
+    - name: Fetch backup archive from backup node to controller
+      ansible.builtin.fetch:
+        src: "{{ sec_archive_out.stdout }}"
+        dest: /tmp/mongo_dr_sync/
+        flat: true
+      when: sec_archive_out.stdout != ""
+
+    - name: Fetch sha256 checksum to controller
+      ansible.builtin.fetch:
+        src: "{{ sec_archive_out.stdout }}.sha256"
+        dest: /tmp/mongo_dr_sync/
+        flat: true
+      when: sec_archive_out.stdout != ""
+      failed_when: false
+
+- name: "Phase 8.2 - Execute Disaster Recovery Restore on Primary"
   hosts: mongodb_primary
   become: true
   vars:
@@ -7,26 +44,36 @@
     restore_drop: true
     restore_oplog_limit: ""
   tasks:
+    - name: Ensure backup directory exists on Primary
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Copy backup archive from controller to Primary node
+      ansible.builtin.copy:
+        src: "/tmp/mongo_dr_sync/{{ hostvars['localhost']['discovered_archive_name'] }}"
+        dest: "{{ backup_dir }}/{{ hostvars['localhost']['discovered_archive_name'] }}"
+        mode: '0644'
+      when: hostvars['localhost']['discovered_archive_name'] | default('') != ''
+
+    - name: Copy sha256 checksum to Primary node
+      ansible.builtin.copy:
+        src: "/tmp/mongo_dr_sync/{{ hostvars['localhost']['discovered_archive_name'] }}.sha256"
+        dest: "{{ backup_dir }}/{{ hostvars['localhost']['discovered_archive_name'] }}.sha256"
+        mode: '0644'
+      when: hostvars['localhost']['discovered_archive_name'] | default('') != ''
+      failed_when: false
+
     - name: Deploy PITR restore helper script
       ansible.builtin.template:
         src: "{{ playbook_dir }}/../templates/restore_pitr.sh.j2"
         dest: /usr/local/bin/restore_pitr.sh
         mode: '0750'
 
-    - name: Locate latest backup archive if not explicitly specified
-      when: restore_archive == ""
-      ansible.builtin.shell: ls -t {{ backup_dir }}/mongo_backup_*.archive.gz 2>/dev/null | head -n 1
-      register: auto_archive
-      changed_when: false
-
-    - name: Resolve archive target
+    - name: Resolve target archive path
       ansible.builtin.set_fact:
-        target_archive: "{{ restore_archive if restore_archive != '' else auto_archive.stdout }}"
-
-    - name: Validate backup archive exists
-      ansible.builtin.fail:
-        msg: "No backup archive found in {{ backup_dir }}. Pass -e 'restore_archive=/path/to/archive.gz'"
-      when: target_archive == ""
+        target_archive: "{{ restore_archive if restore_archive != '' else (backup_dir ~ '/' ~ hostvars['localhost']['discovered_archive_name']) }}"
 
     - name: Execute Disaster Recovery Restore via mongorestore
       ansible.builtin.shell: >
@@ -47,6 +94,6 @@
     - name: Recovery Confirmation
       ansible.builtin.debug:
         msg:
-          - "🎉 DISASTER RECOVERY RESTORE COMPLETED!"
-          - "Target Archive: {{ target_archive }}"
+          - "🎉 DISASTER RECOVERY RESTORE COMPLETED SUCCESSFULLY!"
+          - "Restored Archive: {{ target_archive }}"
           - "{{ dbs_out.stdout_lines }}"
