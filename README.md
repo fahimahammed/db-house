@@ -2,67 +2,93 @@
 
 Production-Grade Database Infrastructure & Automation Repository.
 
-## Architectures & Blueprints
+---
 
-- [MongoDB Enterprise Cluster Production Architecture & Ansible Automation](file:///Users/fahimahammedfiroz/Projects/db-house/MONGODB_PRODUCTION_ARCHITECTURE.md)
-  - 3-Node High-Availability Replica Set (1 Primary + 2 Secondaries)
-  - Production Performance Tuning (XFS, WiredTiger, THP deactivation, Kernel Sysctl)
-  - Enterprise Security (TLS 1.3, internal keyfile, SCRAM-SHA-256 RBAC, Firewall)
-  - Automated Continuous Backup & Point-in-Time Recovery (PITR) to S3/MinIO
-  - Zero-Downtime Rolling Version Upgrades & Feature Compatibility Version management
-  - Dynamic Node Addition & Initial Data Sync
-  - Observability & Monitoring (Prometheus + Grafana + PMM Control Panel)
-  - Horizontal Scaling Roadmap (Replica Set to Sharded Cluster)
+## 📁 Repository Overview
 
-- [Ansible জিরো টু হিরো: বাংলা হ্যান্ডস-অন লার্নিং গাইড](file:///Users/fahimahammedfiroz/Projects/db-house/ansible/README.md)
-  - নতুনদের জন্য ধাপে ধাপে Ansible শেখার কমপ্লিট বাংলা টিউটোরিয়াল
-  - কোনো রিমোট সার্ভার ছাড়া লোকাল পিসিতে প্র্যাকটিস করার ৪টি রেডিমেড প্লেবুক
-  - Ansible মডিউল, ভ্যারিয়েবল, লুপ, হ্যান্ডলার এবং Jinja2 টেমপ্লেট
-  - MongoDB কনফিগারেশন অটোমেশন সিমুলেশন ল্যাব
+| Component | Description | Path |
+| :--- | :--- | :--- |
+| **MongoDB Cluster** | Production-ready 3-node MongoDB 7.0 replica set automation across multi-AZ subnets | [`mongodb-cluster/`](file:///Users/fahimahammedfiroz/Projects/db-house/mongodb-cluster/README.md) |
+| **AWS Infrastructure (IaC)** | Pulumi script provisioning AWS VPC, multi-AZ subnets, security groups, and EC2 instances | [`pulumi/`](file:///Users/fahimahammedfiroz/Projects/db-house/pulumi/) |
+| **Ansible Lab & Guides** | Ansible cheat sheet, modular playbooks, Jinja2 templates, and task simulations | [`ansible/`](file:///Users/fahimahammedfiroz/Projects/db-house/ansible/README.md) |
+| **Automation Makefile** | Quick commands to manage Pulumi cloud resources, clean caches, and tear down instances | [`Makefile`](file:///Users/fahimahammedfiroz/Projects/db-house/Makefile) |
 
 ---
 
-## 🌐 রিমোট সার্ভার ম্যানেজমেন্ট ও Termius ইন্টিগ্রেশন (Remote Server Quickstart)
+## 🏗️ Architecture & Blueprint Highlights
 
-আপনি যদি সার্ভার ম্যানেজ করার জন্য **Termius** ব্যবহার করেন, তবে নিচের ৩টি ধাপে Ansible দিয়ে রিমোট সার্ভারে কানেক্ট করতে পারবেন:
+- **Multi-AZ High Availability:** 3-node replica set (1 Primary + 2 Secondaries) distributed across 3 AWS Availability Zones (`ap-southeast-1a`, `ap-southeast-1b`, `ap-southeast-1c`).
+- **Production OS & Engine Tuning:** Disabled Transparent Huge Pages (THP), tuned kernel parameters (`vm.swappiness=1`, `net.core.somaxconn=65535`), 100,000 file descriptors, and WiredTiger engine optimization.
+- **Enterprise Security:** 1024-byte symmetric cluster keyfile authentication (`0400` permission) and SCRAM-SHA-256 RBAC user management.
+- **Replication & Initial Sync:** Continuous Oplog replication with tailable cursors and verified 5-phase initial sync (`STARTUP` $\rightarrow$ `STARTUP2` $\rightarrow$ `RECOVERING` $\rightarrow$ `SECONDARY`).
+- **Failover Resilience:** Automatic leader election within 2–3 seconds upon primary node failure (Majority Quorum $\ge 2$).
 
-### ১. Termius থেকে Private Key এক্সপোর্ট করুন
-1. Termius অ্যাপ ওপেন করুন -> **Keychain / Vault**-এ যান।
-2. আপনার সার্ভার Key-টির পাশে `...` ক্লিক করে **Export / Copy Private Key** করুন।
-3. আপনার Mac টার্মিনালে সেভ করুন:
-   ```bash
-   mkdir -p ~/.ssh && chmod 700 ~/.ssh
-   nano ~/.ssh/termius_key
-   # কী পেস্ট করে Ctrl+O, Enter, Ctrl+X চেপে সেভ করুন
-   chmod 600 ~/.ssh/termius_key
-   ```
+---
 
-### ২. ইনভেন্টরি ফাইলে রিমোট সার্ভার লিংক করুন (`ansible/inventory.ini`)
-```ini
-[mongodb_cluster]
-mongo-01 ansible_host=10.0.10.11 ansible_user=ubuntu
-mongo-02 ansible_host=10.0.10.12 ansible_user=ubuntu
-mongo-03 ansible_host=10.0.10.13 ansible_user=ubuntu
+## 🔑 Remote Server Access & SSH Key Setup
 
-[mongodb_cluster:vars]
-ansible_ssh_private_key_file=~/.ssh/termius_key
-ansible_python_interpreter=/usr/bin/python3
-ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+If you manage servers using **Termius** or standard cloud PEM keypairs:
+
+### 1. Export and Save Private Key
+Save your private key locally and enforce strict permissions:
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+# Save your key (e.g., ~/.ssh/vps_key.pem)
+chmod 600 ~/.ssh/vps_key.pem
 ```
 
-### ৩. রিমোট সার্ভারে এক ক্লিকে কানেকশন ও প্লেবুক টেস্ট
-```bash
-cd ansible
+### 2. Configure Ansible Inventory
+Update [`mongodb-cluster/inventory/hosts.ini`](file:///Users/fahimahammedfiroz/Projects/db-house/mongodb-cluster/inventory/hosts.ini) with your server IPs and key paths:
+```ini
+[mongodb_primary]
+mongo-01 ansible_host=10.0.1.39 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/vps_key.pem mongo_member_id=0 mongo_priority=2 mongo_votes=1
 
-# ১. সব সার্ভারে একসাথে পিং টেস্ট:
+[mongodb_secondary]
+mongo-02 ansible_host=10.0.2.51 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/vps_key.pem mongo_member_id=1 mongo_priority=1 mongo_votes=1
+mongo-03 ansible_host=10.0.3.43 ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/vps_key.pem mongo_member_id=2 mongo_priority=1 mongo_votes=1
+
+[mongodb_cluster:children]
+mongodb_primary
+mongodb_secondary
+```
+
+---
+
+## ⚡ Quickstart Commands
+
+### 1. Provision Infrastructure with Pulumi
+```bash
+cd pulumi
+source venv/bin/activate
+pulumi up
+```
+
+### 2. Verify Connectivity & Deploy Cluster
+```bash
+cd mongodb-cluster
+
+# Test SSH connection to all nodes
 ansible mongodb_cluster -m ping
 
-# ২. সব সার্ভারের মেমোরি ও আপটাইম চেক:
-ansible mongodb_cluster -a "uptime"
-
-# ৩. রিমোট প্লেবুক রান করা:
-ansible-playbook -i inventory.ini playbooks/site_deploy.yml
+# Deploy entire MongoDB replica set cluster
+ansible-playbook playbooks/site.yml
 ```
 
-> বিস্তারিত রিমোট ট্রাবলশুটিং ও স্টেপ-বাই-স্টেপ গাইডের জন্য দেখুন: [ansible/README.md](file:///Users/fahimahammedfiroz/Projects/db-house/ansible/README.md#পদ্ধতি-২-রিমোট-সার্ভারে-চালানো-remote-execution-via-ssh)
+### 3. Run Verification Tests
+```bash
+# Verify live replication sync
+ansible-playbook playbooks/05_test_replication_sync.yml
 
+# Test initial sync behavior with pre-existing data
+ansible-playbook playbooks/06_test_new_member_initial_sync.yml
+```
+
+### 4. Cleanup & Cost Control
+```bash
+# Teardown MongoDB services on servers
+ansible-playbook playbooks/cleanup.yml
+
+# Destroy AWS resources and clean local caches
+make destroy
+make clean
+```
