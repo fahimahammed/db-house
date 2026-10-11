@@ -34,7 +34,7 @@ ssh_port: 22
 
 # List of application servers allowed to access MongoDB (supports single IPs & CIDRs)
 mongo_allowed_app_clients:
-  - "103.76.154.230"
+  - "103.76.154.0/24"  # Local Client Subnet (handles ISP dynamic IP pool)
 
 # ------------------------------------------------------------------------------
 # 4. Storage & WiredTiger Tuning

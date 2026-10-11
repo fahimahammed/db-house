@@ -1,0 +1,39 @@
+---
+# ==============================================================================
+# Playbook: reconfig_public_ips.yml
+# Purpose: Reconfigure Replica Set member hostnames to use Public IPs so that
+#          application servers in DIFFERENT VPCs or DIFFERENT VPS providers
+#          can connect directly across the WAN.
+# ==============================================================================
+
+- name: "Reconfigure Replica Set Members with Public IPs (Cross-VPC / Remote VPS)"
+  hosts: mongodb_primary
+  become: true
+  tasks:
+    - name: Update Replica Set configuration with Public IPs (ansible_host)
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          let cfg = rs.conf();
+          {% for host in groups["mongodb_cluster"] %}
+          let m{{ loop.index0 }} = cfg.members.find(m => m._id === {{ hostvars[host].mongo_member_id }});
+          if (m{{ loop.index0 }}) m{{ loop.index0 }}.host = "{{ hostvars[host].ansible_host }}:{{ mongo_port }}";
+          {% endfor %}
+          rs.reconfig(cfg, { force: true });
+        '
+      register: reconfig_res
+
+    - name: Pause 5 seconds for reconfig propagation
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Verify Cluster Status with Public IPs
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          rs.status().members.map(m => m.name + " (" + m.stateStr + ")")
+        '
+      register: final_members
+
+    - name: Print New Replica Set Members with Public IPs
+      ansible.builtin.debug:
+        msg: "{{ final_members.stdout_lines }}"
+

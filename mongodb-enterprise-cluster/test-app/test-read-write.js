@@ -9,9 +9,22 @@
  *   3. Modern retryable writes handle instantaneous topology shifts seamlessly
  */
 
-const { MongoClient } = require('mongodb');
+const fs = require('fs');
+const path = require('path');
 
-const uri = process.env.MONGO_URI || "mongodb://appUser:AppUserSecret2026!@10.0.1.30:27017,10.0.2.51:27017,10.0.3.43:27017/ecommerce_db?replicaSet=rs-prod-01&authSource=ecommerce_db&readPreference=secondaryPreferred&retryWrites=true&w=majority";
+// Auto-load .env if present
+try {
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    const envLines = fs.readFileSync(envPath, 'utf8').split('\n');
+    envLines.forEach(line => {
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+      if (match && !process.env[match[1]]) process.env[match[1]] = match[2].trim();
+    });
+  }
+} catch (e) {}
+
+const uri = process.env.MONGO_URI || "mongodb://appUser:AppUserSecret2026!@18.143.176.226:27017,13.250.104.67:27017,18.141.4.93:27017/ecommerce_db?replicaSet=rs-prod-01&authSource=ecommerce_db&readPreference=secondaryPreferred&retryWrites=true&w=majority";
 
 async function run() {
   console.log("================================================================================");

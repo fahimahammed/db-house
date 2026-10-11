@@ -16,6 +16,18 @@
         name: ufw
         state: present
 
+    - name: Reset UFW to clean state (clears conflicting rules)
+      community.general.ufw:
+        state: reset
+
+    - name: Set UFW default policies (deny incoming, allow outgoing)
+      community.general.ufw:
+        direction: "{{ item.dir }}"
+        policy: "{{ item.policy }}"
+      loop:
+        - { dir: incoming, policy: deny }
+        - { dir: outgoing, policy: allow }
+
     - name: Allow SSH management port ({{ ssh_port | default(22) }})
       community.general.ufw:
         rule: allow
@@ -36,26 +48,18 @@
         proto: tcp
       loop: "{{ all_allowed_ips }}"
 
-    - name: Block all other incoming traffic to MongoDB port {{ mongo_port }}
+    - name: Enable UFW firewall service
       community.general.ufw:
-        rule: deny
-        port: "{{ mongo_port }}"
-        proto: tcp
-
-    - name: Enforce UFW default policies & enable service
-      community.general.ufw:
-        direction: "{{ item.dir }}"
-        policy: "{{ item.policy }}"
         state: enabled
-      loop:
-        - { dir: incoming, policy: deny }
-        - { dir: outgoing, policy: allow }
 
     - name: Display active firewall rules
-      ansible.builtin.command: ufw status verbose
+      ansible.builtin.command: ufw status numbered
       register: ufw_status
       changed_when: false
 
     - name: Firewall Confirmation
       ansible.builtin.debug:
-        msg: "✅ MongoDB access successfully bound to: {{ all_allowed_ips }}"
+        msg:
+          - "✅ UFW Rules active:"
+          - "{{ ufw_status.stdout_lines }}"
+          - "Allowed sources for port {{ mongo_port }}: {{ all_allowed_ips }}"
