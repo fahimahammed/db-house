@@ -1,9 +1,5 @@
 ---
-# ==============================================================================
 # Zero-Downtime Rolling Upgrade Orchestration
-# Usage:
-#   ansible-playbook playbooks/09_rolling_upgrade.yml -e "target_upgrade_version=8.0 target_feature_compatibility_version=8.0"
-# ==============================================================================
 
 - name: "Step 1 - Pre-flight Health Check on Primary"
   hosts: mongodb_primary

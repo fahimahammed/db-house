@@ -1,11 +1,4 @@
 ---
-# ==============================================================================
-# Playbook: 08_restore_disaster_recovery.yml
-# Purpose: Disaster Recovery & Point-In-Time Restore (PITR) with Oplog Replay.
-#          Locates latest backup on Secondary node, transfers it securely via
-#          Ansible Controller to Primary, verifies SHA256, and restores data.
-# ==============================================================================
-
 - name: "Phase 8.1 - Locate and Fetch Latest Backup Archive from Backup Node"
   hosts: "{{ backup_target_node | default(groups['mongodb_secondary'][0]) }}"
   become: true

@@ -1,240 +1,417 @@
 # MongoDB Enterprise Replica Set Cluster
-### High Availability, Network Access Control, Automated Backups & Zero-Downtime Rolling Migrations
+### High Availability, Network Access Control, Automated Backups, PITR & Zero-Downtime Rolling Upgrades
 
-An enterprise-ready, fully automated **MongoDB 7.0 / 8.0 Multi-AZ Replica Set** deployment managed via Ansible.
-
----
-
-## 1. Key Enterprise Features
-
-| Feature | Description | Reference / Playbook |
-| :--- | :--- | :--- |
-| **High Availability (HA)** | 3-node multi-AZ architecture with automatic failover ($\leq 3\text{s}$) and quorum consensus. | [`playbooks/04_init_replicaset.yml`](playbooks/04_init_replicaset.yml) |
-| **Application Server Binding** | Restricts MongoDB port `27017` to authorized application servers and internal cluster nodes only. Unauthorized IPs are strictly blocked. | [`playbooks/05_setup_firewall_access.yml`](playbooks/05_setup_firewall_access.yml) |
-| **Automated Backups** | Periodic scheduled backups on Secondary node via systemd timer/cron with `--oplog` consistency, SHA-256 checksums, and retention pruning. | [`playbooks/06_setup_automated_backups.yml`](playbooks/06_setup_automated_backups.yml) |
-| **On-Demand Manual Backups** | Instant point-in-time snapshot triggerable via CLI script or Ansible at any time. | [`playbooks/07_trigger_manual_backup.yml`](playbooks/07_trigger_manual_backup.yml) |
-| **Disaster Recovery (DR) & PITR** | Comprehensive disaster recovery with Point-In-Time-Recovery (PITR) oplog replay up to the second before data loss or accidental deletion. | [`playbooks/08_restore_disaster_recovery.yml`](playbooks/08_restore_disaster_recovery.yml) |
-| **Zero-Downtime Rolling Upgrade** | Seamless version upgrades (e.g., 7.0 $\rightarrow$ 8.0) via sequential secondary upgrades, primary stepdown, and FCV finalization with 0 application downtime. | [`playbooks/09_rolling_upgrade.yml`](playbooks/09_rolling_upgrade.yml) |
+An enterprise-grade, fully automated **MongoDB 7.0 / 8.0 Multi-AZ Replica Set** deployment and lifecycle management framework powered by Ansible.
 
 ---
 
-## 2. Cluster Architecture & Network Topology
+## 1. Enterprise Feature Matrix
+
+| Feature | Technical Mechanism | Benefit | Reference Playbook / Script |
+| :--- | :--- | :--- | :--- |
+| **High Availability & Auto-Failover** | 3-node distributed consensus with election timeout $\le 2\text{s}$ and failover $\le 3\text{s}$. | Continuous database availability during AZ outage or hardware failure without manual intervention. | [`playbooks/04_init_replicaset.yml`](playbooks/04_init_replicaset.yml) |
+| **Application Server Binding** | Linux Kernel Firewall (`UFW`) default-deny policy with strict IP/CIDR allowlisting for port `27017`. | MongoDB is completely unreachable from the public internet; only authorized application servers and peer nodes can connect. | [`playbooks/05_setup_firewall_access.yml`](playbooks/05_setup_firewall_access.yml)<br>[`scripts/test_client_access.sh`](scripts/test_client_access.sh) |
+| **Enterprise Authentication & RBAC** | SCRAM-SHA-256 user authentication paired with a shared 1024-bit cluster keyfile for internal node mesh encryption. | Prevents unauthorized command execution and secures intra-cluster replication traffic. | [`playbooks/03_configure_mongodb.yml`](playbooks/03_configure_mongodb.yml)<br>[`playbooks/04_init_replicaset.yml`](playbooks/04_init_replicaset.yml) |
+| **Secondary-Targeted Automated Backups** | Systemd Timer executes scheduled `mongodump` with `--oplog` on designated Secondary (`mongo-02`) with gzip compression and SHA-256 verification. | 100% consistent transactional snapshots with **zero I/O hit** on the Primary node. Automatic 7-day retention cleanup. | [`playbooks/06_setup_automated_backups.yml`](playbooks/06_setup_automated_backups.yml) |
+| **On-Demand Manual Snapshots** | Immediate point-in-time snapshot triggerable on-demand with optional download to the Ansible controller. | Pre-deployment safekeeping and compliance archive generation. | [`playbooks/07_trigger_manual_backup.yml`](playbooks/07_trigger_manual_backup.yml)<br>[`scripts/trigger_backup.sh`](scripts/trigger_backup.sh) |
+| **Disaster Recovery & Granular PITR** | `mongorestore` paired with oplog replaying up to a specific timestamp (`--oplogLimit='sec:inc'`). | Instant point-in-time recovery to the second right before accidental `dropDatabase` or data corruption. | [`playbooks/08_restore_disaster_recovery.yml`](playbooks/08_restore_disaster_recovery.yml)<br>[`scripts/restore_pitr.sh`](scripts/restore_pitr.sh) |
+| **Zero-Downtime Rolling Upgrades** | Sequential node-by-node binary upgrades ($7.0 \rightarrow 8.0$), controlled Primary stepdown (`rs.stepDown`), and FCV finalization. | Version upgrades without application interruption or query downtime. | [`playbooks/09_rolling_upgrade.yml`](playbooks/09_rolling_upgrade.yml)<br>[`scripts/rolling_upgrade_check.sh`](scripts/rolling_upgrade_check.sh) |
+| **Cross-VPC / Remote Node Reconfiguration** | Automated dynamic replica set reconfiguration supporting public WAN IPs and multi-cloud nodes. | Seamless connection when application servers reside in external VPCs or different cloud providers. | [`playbooks/reconfig_public_ips.yml`](playbooks/reconfig_public_ips.yml) |
+| **Automated Replication Verification** | Automated document injection on Primary with assertion of secondary propagation in $< 2\text{s}$. | Guarantees replication health and validates replication lag across all nodes. | [`playbooks/10_test_replication_sync.yml`](playbooks/10_test_replication_sync.yml)<br>[`scripts/verify_cluster.sh`](scripts/verify_cluster.sh) |
+| **Resilience & Failover Test Suite** | Production Node.js client harness for read/write splitting, continuous write resilience, and PITR validation. | End-to-end driver-level testing under real application traffic conditions. | [`test-app/`](test-app/) |
+
+---
+
+## 2. Complete System Architecture & Network Topology
 
 ```mermaid
-graph TB
-    subgraph ClientLayer["Authorized Application Servers (Allowed Only)"]
-        App1["App Server 1 (API Gateway)<br/>10.0.10.15"]
-        App2["App Server 2 (Worker)<br/>10.0.10.16"]
-        AppSubnet["Microservices Subnet<br/>10.0.20.0/24"]
+flowchart TB
+    subgraph ClientZone["Client Application Layer (Authorized Only)"]
+        App1["App Server 1 (API Gateway)<br/>IP: 10.0.10.15"]
+        App2["App Server 2 (Worker)<br/>IP: 10.0.10.16"]
+        SubnetApps["Microservice Subnet<br/>CIDR: 103.76.154.0/24"]
     end
 
     subgraph BlockedZone["Unauthorized External Traffic"]
-        PublicAttacker["Unauthorized Internet IP"]
+        Attacker["Unauthorized Internet / External IP"]
     end
 
-    subgraph Cluster["MongoDB Enterprise Cluster (Multi-AZ)"]
-        subgraph Node1["mongo-01 (Priority 2) - ap-southeast-1a"]
-            FW1["Kernel Firewall (UFW)"]
-            DB1["mongod :27017<br/>Role: PRIMARY"]
+    subgraph ClusterMesh["MongoDB Multi-AZ Enterprise Replica Set ('rs-prod-01')"]
+        direction TB
+
+        subgraph Node1["Node 1: mongo-01 (Priority 2) - AZ: ap-southeast-1a"]
+            UFW1["Kernel Firewall (UFW)<br/>Default: DENY INCOMING"]
+            DB1["mongod :27017<br/>Role: PRIMARY<br/>WiredTiger Engine (Cache: 1GB)"]
+            UFW1 -->|Port 27017 (Local Allow)| DB1
         end
 
-        subgraph Node2["mongo-02 (Priority 1) - ap-southeast-1b"]
-            FW2["Kernel Firewall (UFW)"]
+        subgraph Node2["Node 2: mongo-02 (Priority 1) - AZ: ap-southeast-1b"]
+            UFW2["Kernel Firewall (UFW)<br/>Default: DENY INCOMING"]
             DB2["mongod :27017<br/>Role: SECONDARY<br/>🕒 Automated Backup Engine"]
+            Timer2["systemd timer: mongodb-backup<br/>Schedule: Daily 02:00 UTC<br/>Storage: /var/backups/mongodb"]
+            UFW2 -->|Port 27017 (Local Allow)| DB2
+            Timer2 -.->|Zero-I/O mongodump --oplog| DB2
         end
 
-        subgraph Node3["mongo-03 (Priority 1) - ap-southeast-1c"]
-            FW3["Kernel Firewall (UFW)"]
-            DB3["mongod :27017<br/>Role: SECONDARY<br/>🛡️ DR Replica"]
+        subgraph Node3["Node 3: mongo-03 (Priority 1) - AZ: ap-southeast-1c"]
+            UFW3["Kernel Firewall (UFW)<br/>Default: DENY INCOMING"]
+            DB3["mongod :27017<br/>Role: SECONDARY<br/>🛡️ DR Replica & Read Scaling"]
+            UFW3 -->|Port 27017 (Local Allow)| DB3
         end
     end
 
-    PublicAttacker -.->|Port 27017: DROPPED ❌| FW1
-    PublicAttacker -.->|Port 27017: DROPPED ❌| FW2
+    subgraph AdminLayer["Control & Orchestration Layer"]
+        AnsibleCtrl["Ansible Controller<br/>Key: keys/MyKeyPair.pem<br/>Keyfile: security/mongo-keyfile"]
+    end
 
-    App1 ==>|Allowed Port 27017 ✅ (Writes)| FW1
-    App2 ==>|Allowed Port 27017 ✅ (Writes)| FW1
-    AppSubnet ==>|Allowed Port 27017 ✅ (Reads)| FW2
-    AppSubnet ==>|Allowed Port 27017 ✅ (Reads)| FW3
+    %% Security Boundaries
+    Attacker -.->|Port 27017: DROP (Connection Refused/Silent Drop)| UFW1
+    Attacker -.->|Port 27017: DROP (Connection Refused/Silent Drop)| UFW2
+    Attacker -.->|Port 27017: DROP (Connection Refused/Silent Drop)| UFW3
 
-    DB1 <==>|Internal Sync & Heartbeats :27017| DB2
-    DB2 <==>|Internal Sync & Heartbeats :27017| DB3
-    DB1 <==>|Internal Sync & Heartbeats :27017| DB3
+    %% Allowed Traffic
+    App1 ==>|Allowed Port 27017 (Writes: w:majority)| UFW1
+    App2 ==>|Allowed Port 27017 (Writes: w:majority)| UFW1
+    SubnetApps ==>|Allowed Port 27017 (Reads: secondaryPreferred)| UFW2
+    SubnetApps ==>|Allowed Port 27017 (Reads: secondaryPreferred)| UFW3
+
+    %% Internal Intra-Cluster Sync
+    DB1 <===>|Internal Replication & Heartbeats (Keyfile Auth)| DB2
+    DB2 <===>|Internal Replication & Heartbeats (Keyfile Auth)| DB3
+    DB1 <===>|Internal Replication & Heartbeats (Keyfile Auth)| DB3
+
+    %% Orchestration
+    AnsibleCtrl -.->|SSH :22 (Playbook Automation)| UFW1
+    AnsibleCtrl -.->|SSH :22 (Playbook Automation)| UFW2
+    AnsibleCtrl -.->|SSH :22 (Playbook Automation)| UFW3
 ```
 
 ---
 
-## 3. Node Inventory & Prerequisites
+## 3. Situation-Based Operational Workflows
 
-### Cluster Nodes
-| Hostname | Role | Subnet / AZ | Private IP | Resources | OS |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `mongo-01` | **PRIMARY** (Priority 2) | Subnet-01 (`ap-southeast-1a`) | `10.0.1.30` | 2 vCPU, 4GB RAM, 20GB SSD | Ubuntu 22.04 / 24.04 |
-| `mongo-02` | **SECONDARY** (Priority 1, Backups) | Subnet-02 (`ap-southeast-1b`) | `10.0.2.51` | 2 vCPU, 4GB RAM, 20GB SSD | Ubuntu 22.04 / 24.04 |
-| `mongo-03` | **SECONDARY** (Priority 1, DR) | Subnet-03 (`ap-southeast-1c`) | `10.0.3.43` | 2 vCPU, 4GB RAM, 20GB SSD | Ubuntu 22.04 / 24.04 |
-
-### SSH Key Permissions
-Ensure keys are chmod 400 / 600:
-```bash
-chmod 600 keys/MyKeyPair.pem
-```
-
----
-
-## 4. Quickstart Deployment (Single Master Command)
-
-To provision the full enterprise cluster from scratch (system tuning, packages, keyfiles, replica set initialization, firewall server binding, automated backup schedules, and replication test):
-
-```bash
-cd mongodb-enterprise-cluster
-ansible-playbook playbooks/site.yml
-```
-
----
-
-## 5. Feature Execution Guide
-
-### Feature A: Bind Database Access to Specific Application Servers
-To restrict MongoDB port `27017` to specific application servers and internal cluster nodes:
-1. Open [`inventory/group_vars/all.yml`](inventory/group_vars/all.yml) and configure your allowed application servers:
-   ```yaml
-   firewall_access_control_enabled: true
-   mongo_allowed_app_clients:
-     - "10.0.10.15"       # App Server 1 (API Gateway)
-     - "10.0.10.16"       # App Server 2 (Background Worker)
-     - "10.0.20.0/24"     # Microservices Subnet
-   ```
-2. Apply the firewall configuration:
-   ```bash
-   ansible-playbook playbooks/05_setup_firewall_access.yml
-   ```
-3. Test network access:
-   ```bash
-   # From an allowed client:
-   ./scripts/test_client_access.sh 10.0.1.30 27017
-   # => Output: ✅ ACCESS GRANTED
-
-   # From an unauthorized client / internet IP:
-   ./scripts/test_client_access.sh 10.0.1.30 27017
-   # => Output: 🛑 ACCESS DENIED / BLOCKED
-   ```
-*Detailed guide:* [`docs/FIREWALL_ACCESS_CONTROL.md`](docs/FIREWALL_ACCESS_CONTROL.md)
-
----
-
-### Feature B: Automated Backups & Manual Trigger
-Backups are executed on `mongo-02` (Secondary) with `--oplog` transactional consistency, SHA-256 validation, and automatic 7-day retention cleanup.
-
-#### 1. Setup / Update Automated Backup Schedule
-```bash
-ansible-playbook playbooks/06_setup_automated_backups.yml
-```
-*Schedule runs daily at 02:00:00 UTC via systemd timer `mongodb-backup.timer`.*
-
-#### 2. Trigger an Immediate Manual Backup
-```bash
-# Using CLI script:
-./scripts/trigger_backup.sh
-
-# Or with Ansible (and download archive locally):
-ansible-playbook playbooks/07_trigger_manual_backup.yml -e "fetch_to_controller=true"
-```
-*Backups are saved to `/var/backups/mongodb/mongo_backup_<TIMESTAMP>.archive.gz`.*
-
----
-
-### Feature C: Disaster Recovery (DR) & Point-In-Time-Recovery (PITR)
-What happens if data is accidentally deleted or hardware is destroyed?
-
-#### Scenario 1: Automatic Failover (Node Crash)
-If the Primary goes offline:
-- Secondaries elect a new Primary in $\leq 3$ seconds.
-- Applications with modern connection strings (`retryWrites=true`) experience zero data loss.
-- When the crashed node recovers, it automatically replays missed oplog entries.
-
-#### Scenario 2: Point-In-Time-Recovery (Accidental Deletion / Human Error)
-If a collection is dropped at timestamp $T_{\text{drop}}$:
-```bash
-# Restore latest backup and replay oplog stopping right before T_drop:
-ansible-playbook playbooks/08_restore_disaster_recovery.yml \
-  -e "restore_oplog_limit='1712839200:1' restore_drop=true"
-```
-
-#### Scenario 3: Full Disaster Recovery Restore
-To restore all databases from the latest archive snapshot:
-```bash
-ansible-playbook playbooks/08_restore_disaster_recovery.yml
-```
-*Detailed guide:* [`docs/BACKUP_AND_DISASTER_RECOVERY.md`](docs/BACKUP_AND_DISASTER_RECOVERY.md)
-
----
-
-### Feature D: Zero-Downtime Rolling Version Upgrade (e.g. 7.0 $\rightarrow$ 8.0)
-Upgrade all cluster nodes to a new major/minor version with **zero downtime**:
+### Situation 1: Normal Operations & Read/Write Splitting
+In healthy state, client applications distribute load automatically between the Primary and Secondaries using driver-level read preference.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant App as Client Applications
+    participant App as Application Driver (Node.js / Go / Java)
+    participant P as mongo-01 (PRIMARY)
+    participant S1 as mongo-02 (SECONDARY - Backup)
+    participant S2 as mongo-03 (SECONDARY - DR)
+
+    Note over App,P: Write Request (w: majority, j: true)
+    App->>P: db.collection.insertOne({ item: "A", qty: 100 })
+    P->>P: Write to local journal & oplog.rs
+    par Async Replication Mesh
+        P->>S1: Stream Oplog Entry
+        P->>S2: Stream Oplog Entry
+    end
+    S1-->>P: Acknowledge write applied
+    P-->>App: ✅ Write Confirmed (Majority Quorum Met)
+
+    Note over App,S2: Read Request (readPreference: secondaryPreferred)
+    App->>S2: db.collection.find({ item: "A" })
+    S2-->>App: ✅ Return Documents (Zero impact on Primary CPU)
+```
+
+**How the System Handles This:**
+1. All database writes are strictly routed to `mongo-01` (Primary).
+2. The Primary replicates data asynchronously to `mongo-02` and `mongo-03` via `local.oplog.rs`.
+3. Read operations targeting `secondaryPreferred` are load-balanced across Secondaries, ensuring near-zero CPU and memory contention on the Primary.
+
+---
+
+### Situation 2: Network Access Control & Intrusion Blocking
+Database port `27017` is tightly bound so that unauthorized external IPs cannot discover, probe, or connect to the database.
+
+```mermaid
+flowchart TD
+    ClientReq["Incoming Network Connection on Port 27017"] --> KernelCheck{"Linux Kernel (UFW Rules Check)"}
+    
+    KernelCheck -->|"Source IP matches mongo_allowed_app_clients<br/>or Cluster Peer Node IP"| AllowRule["Rule: ALLOW IN<br/>Packet forwarded to mongod"]
+    KernelCheck -->|"Source IP is NOT in allowed list<br/>(External IP / Internet Attacker)"| DenyRule["Rule: DEFAULT DENY<br/>Packet DROPPED immediately"]
+
+    AllowRule --> DBAuth{"mongod SCRAM-SHA-256 Auth"}
+    DBAuth -->|"Valid Credentials"| ConnOK["✅ Connection Established (Read/Write Allowed)"]
+    DBAuth -->|"Invalid Credentials"| ConnAuthFail["❌ 401 Unauthorized Rejected"]
+
+    DenyRule --> Blocked["🛑 Connection Timed Out / Dropped at Kernel Level"]
+```
+
+**How the System Handles This:**
+1. **Kernel-Level Enforcement:** Linux `ufw` sets a default incoming policy of `deny`.
+2. **Explicit Allow Rules:** Only the IPs/CIDRs configured in `mongo_allowed_app_clients` and the internal cluster IPs are granted access to port `27017`.
+3. **Internal Keyfile Mesh:** Intra-cluster replication requires mutual 1024-bit keyfile authentication, preventing rogue nodes from joining the replica set even if they are in the same network.
+
+---
+
+### Situation 3: Primary Node Failure & Automatic Failover
+If the active Primary crashes, loses power, or experiences network partition, the cluster automatically elects a new Primary in $\le 3$ seconds.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Application Driver (retryWrites=true)
+    participant P as mongo-01 (PRIMARY - Crashed)
+    participant S1 as mongo-02 (SECONDARY)
+    participant S2 as mongo-03 (SECONDARY)
+
+    Note over P: 💥 Hardware Failure / Kernel Panic / Network Partition
+    rect rgb(255, 230, 230)
+    S1-xP: Heartbeat check fails (Timeout: 2s)
+    S2-xP: Heartbeat check fails (Timeout: 2s)
+    end
+
+    Note over S1,S2: Election Protocol (Quorum: 2 out of 3 votes)
+    S1->>S2: Vote Request (Term N+1)
+    S2-->>S1: Grant Vote
+    Note over S1: S1 elected NEW PRIMARY (Duration: <= 3s)
+
+    Note over App,S1: Application Driver Failover Handling
+    App->>P: Pending Write Request
+    P--xApp: Network Timeout / Server Selection Error
+    Note over App: Driver detects topology change via SDAM
+    App->>S1: Automatic Write Retry (retryWrites=true)
+    S1-->>App: ✅ Write Confirmed on New Primary (Zero Data Loss)
+
+    Note over P,S1: Recovery Phase
+    Note over P: mongo-01 reboots and comes back online
+    P->>S1: Connects to New Primary
+    Note over P: P transitions to SECONDARY role
+    S1->>P: Stream missed oplog entries (Replication catches up)
+```
+
+**How the System Handles This:**
+1. **Heartbeat Timeout:** Cluster nodes poll each other every 2 seconds. When heartbeats to the Primary fail for $> 2\text{s}$, Secondaries transition to `CANDIDATE` state.
+2. **Quorum Consensus:** `mongo-02` and `mongo-03` form a majority quorum (2 of 3 votes) and elect `mongo-02` as the new Primary.
+3. **Application Transparency:** With `retryWrites=true` and standard MongoDB connection strings, the application driver buffers and retries writes against the new Primary without throwing application-level errors.
+4. **Self-Healing:** When `mongo-01` recovers, it automatically demotes itself to Secondary and replicates any oplog entries it missed.
+
+---
+
+### Situation 4: Automated Scheduled & Manual Backups
+Backups run automatically on the designated Secondary (`mongo-02`) so the Primary's write throughput remains 100% unaffected.
+
+```mermaid
+flowchart TD
+    Trigger["Trigger: Systemd Timer (02:00 UTC) OR Manual CLI Script"] --> TargetNode["Target: Secondary Node (mongo-02)"]
+    
+    TargetNode --> Step1["Step 1: Check Node Health & Replica State (Must be SECONDARY)"]
+    Step1 --> Step2["Step 2: Execute mongodump --oplog --gzip --archive"]
+    
+    Step2 --> Step3["Step 3: Generate SHA-256 Checksum file (.sha256)"]
+    Step3 --> Step4["Step 4: Verify archive integrity and size (> 0 bytes)"]
+    
+    Step4 --> Step5["Step 5: Prune snapshots older than retention limit (7 days)"]
+    Step5 --> Step6["Step 6: Write audit log to /var/log/mongodb/backup.log"]
+    
+    Step6 --> OptionalFetch{"Manual Flag: fetch_to_controller?"}
+    OptionalFetch -->|"true"| ControllerDownload["Download archive to Ansible Controller local directory"]
+    OptionalFetch -->|"false"| Finish["✅ Backup Stored Securely on Secondary Node"]
+```
+
+**How the System Handles This:**
+1. **Dedicated Secondary Target:** `mongo-02` performs the dump, offloading disk I/O and CPU overhead completely from the Primary.
+2. **Transactional Consistency (`--oplog`):** Captures point-in-time transactions while the dump runs, preventing partial or inconsistent writes.
+3. **Cryptographic Checksums:** Generates `.sha256` alongside each archive to guarantee integrity before any restore operation.
+4. **Automated Pruning:** Deletes snapshots older than 7 days to prevent disk space exhaustion.
+
+---
+
+### Situation 5: Accidental Data Deletion & Point-In-Time-Recovery (PITR)
+If a user or bad migration drops a critical database or collection at timestamp $T_{\text{drop}}$, the system recovers 100% of data up to the exact second prior to the incident.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as SysAdmin / DBA
+    participant P as mongo-01 (PRIMARY)
+    participant B as /var/backups/mongodb (Latest Archive)
+    participant Rest as Restore Engine (mongorestore)
+
+    Note over P: ⚠️ 14:00:00 UTC - Base Backup Created
+    Note over P: 14:15:30 UTC - 10,000 Orders Processed
+    Note over P: 💥 14:20:00 UTC - Accidental: db.orders.drop() executed! (T_drop = 1712839200:1)
+
+    Admin->>P: Step 1: Query oplog to find exact drop timestamp (T_drop)
+    P-->>Admin: Returns timestamp: 1712839200:1 (cmd: { drop: "orders" })
+
+    Admin->>Rest: Step 2: Invoke PITR Restore with oplogLimit = '1712839200:1'
+    Rest->>B: Load base backup snapshot (State at 14:00:00)
+    Rest->>P: Restore collections with --drop
+    Note over Rest,P: Step 3: Replay oplog entries chronologically
+    Rest->>P: Replay writes from 14:00:01 to 14:19:59 UTC
+    Note over Rest: 🛑 Halt replay immediately BEFORE drop timestamp 1712839200:1!
+    Rest-->>Admin: ✅ Recovery Complete: All 10,000 orders restored! 0 dropped data.
+```
+
+**How the System Handles This:**
+1. **Base Archive Restoration:** The latest consistent backup archive is unpacked and restored to the database.
+2. **Oplog Replay Boundary:** Using `--oplogLimit='<sec>:<inc>'`, `mongorestore` replays every operation recorded in the oplog but stops right before the destructive drop command.
+3. **Data Integrity:** No valid transactions prior to the incident are lost.
+
+---
+
+### Situation 6: Zero-Downtime Rolling Engine Upgrade ($7.0 \rightarrow 8.0$)
+Upgrading database binaries across major versions without halting live application reads and writes.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Active Application Traffic
+    participant S2 as mongo-03 (Secondary 2)
+    participant S1 as mongo-02 (Secondary 1)
     participant P as mongo-01 (Current Primary)
-    participant S1 as mongo-02 (Secondary)
-    participant S2 as mongo-03 (Secondary)
 
-    App->>P: Live Write Stream (Writes Accepted)
-    Note over S2: Step 1: Upgrade S2 binaries & restart
-    S2->>P: Rejoin & catch up replication (Lag = 0s)
-    Note over S1: Step 2: Upgrade S1 binaries & restart
-    S1->>P: Rejoin & catch up replication (Lag = 0s)
-    Note over P: Step 3: Graceful Stepdown (rs.stepDown)
-    P->>S1: Hand over Primary role
-    Note over S1: S1 elected NEW PRIMARY
-    App->>S1: Live Write Stream automatically redirected! (Downtime: 0s)
-    Note over P: Step 4: Upgrade former Primary (P) binaries & restart
-    P->>S1: Rejoin as SECONDARY
-    Note over S1: Step 5: Finalize setFeatureCompatibilityVersion('8.0')
-    S1-->>App: Full Upgrade Complete!
+    Note over App,P: Live Writes Continuous Stream (Downtime: 0s)
+    
+    Note over S2: Phase 1: Upgrade Secondary mongo-03
+    Note over S2: Stop mongod -> Upgrade 8.0 Packages -> Start mongod
+    S2->>P: Rejoin cluster & sync oplog (Lag = 0s)
+
+    Note over S1: Phase 2: Upgrade Secondary mongo-02
+    Note over S1: Stop mongod -> Upgrade 8.0 Packages -> Start mongod
+    S1->>P: Rejoin cluster & sync oplog (Lag = 0s)
+
+    Note over P,S1: Phase 3: Controlled Primary Stepdown
+    P->>P: Execute rs.stepDown(60, 10)
+    P->>S1: Hand over Primary leadership
+    Note over S1: S1 elected NEW PRIMARY (Version 8.0)
+    App->>S1: App writes automatically redirect to S1!
+
+    Note over P: Phase 4: Upgrade Former Primary (mongo-01)
+    Note over P: Stop mongod -> Upgrade 8.0 Packages -> Start mongod
+    P->>S1: Rejoin cluster as SECONDARY (Version 8.0)
+
+    Note over S1: Phase 5: Finalize Feature Compatibility Version
+    S1->>S1: setFeatureCompatibilityVersion('8.0')
+    Note over App,S1: 🎉 Full Cluster Running MongoDB 8.0 with Zero Downtime!
 ```
 
-To execute the automated rolling upgrade:
-```bash
-ansible-playbook playbooks/09_rolling_upgrade.yml \
-  -e "target_upgrade_version=8.0 target_feature_compatibility_version=8.0"
-```
-*Detailed guide:* [`docs/ZERO_DOWNTIME_MIGRATION.md`](docs/ZERO_DOWNTIME_MIGRATION.md)
+**How the System Handles This:**
+1. **Sequential Secondary Upgrade:** Secondaries are upgraded one at a time. After each upgrade, the automation verifies that replication lag returns to zero.
+2. **Graceful Stepdown:** The Primary executes `rs.stepDown()`, allowing an already upgraded Secondary to take over leadership with zero write corruption.
+3. **Old Primary Upgrade:** The former Primary is upgraded while serving as a Secondary.
+4. **FCV Finalization:** Once all nodes run the new version, `featureCompatibilityVersion` is set to `8.0`, unlocking new engine features.
 
 ---
 
-## 6. Testing & Validation
+## 4. Master Command Cheat Sheet
 
-### 1. Replica Set Health & Status Check
-```bash
-./scripts/verify_cluster.sh <PRIMARY_IP> 27017 clusterAdmin "ClusterAdminSecret2026!"
-```
+### Phase 1: Initial Cluster Provisioning & Deployment
+| Task | Exact Command | Purpose |
+| :--- | :--- | :--- |
+| **Full Cluster Deployment** | `ansible-playbook playbooks/site.yml` | Complete setup: OS tuning, MongoDB installation, keyfile security, replica set init, firewall rules, automated backups, and replication test. |
+| **System Preparation Only** | `ansible-playbook playbooks/01_system_prep.yml` | Configure swap, sysctl kernel limits, hugepages, and package dependencies. |
+| **Install MongoDB Packages** | `ansible-playbook playbooks/02_install_mongodb.yml` | Install MongoDB Enterprise/Community packages and configure service. |
+| **Configure Node Settings** | `ansible-playbook playbooks/03_configure_mongodb.yml` | Deploy `mongod.conf`, generate/distribute 1024-bit keyfile, set permissions. |
+| **Initialize Replica Set** | `ansible-playbook playbooks/04_init_replicaset.yml` | Execute `rs.initiate()`, configure voting priorities, and create RBAC admin & app users. |
 
-### 2. Live Replication Sync Test
-Inserts 50 documents into Primary and asserts secondaries replicate them in $< 2$ seconds:
-```bash
-ansible-playbook playbooks/10_test_replication_sync.yml
-```
+### Phase 2: Network Access Control & Firewall Management
+| Task | Exact Command | Purpose |
+| :--- | :--- | :--- |
+| **Apply / Update Firewall Rules** | `ansible-playbook playbooks/05_setup_firewall_access.yml` | Enforce default-deny on UFW, permit cluster peer traffic and allowlisted application IPs/CIDRs. |
+| **Test Client Network Access** | `./scripts/test_client_access.sh <NODE_IP> 27017` | Verify whether current machine is permitted or blocked by the firewall. |
+| **Verify Firewall State via Ansible** | `ansible-playbook playbooks/11_test_client_access_control.yml` | Assert UFW active status and incoming deny policy across all nodes. |
+| **Reconfigure for Public IPs** | `ansible-playbook playbooks/reconfig_public_ips.yml` | Update replica set member hostnames to public WAN IPs for cross-VPC application connectivity. |
 
-### 3. Application Driver Read/Write Split & Failover Test
-Run the Node.js test client inside `test-app/`:
-```bash
-cd test-app
-npm install
-npm test
-```
-To run continuous write streaming while testing failover or rolling upgrade:
-```bash
-npm run resilience
-```
+### Phase 3: Backup Operations
+| Task | Exact Command | Purpose |
+| :--- | :--- | :--- |
+| **Configure Automated Backup Schedule** | `ansible-playbook playbooks/06_setup_automated_backups.yml` | Install backup script, systemd timer (`02:00 UTC`), log rotation, and retention on Secondary. |
+| **Trigger Immediate Backup (CLI)** | `./scripts/trigger_backup.sh` | Trigger an on-demand snapshot immediately on the designated Secondary node. |
+| **Trigger Backup & Fetch to Controller** | `ansible-playbook playbooks/07_trigger_manual_backup.yml -e "fetch_to_controller=true"` | Run snapshot on Secondary and immediately download the archive to the local Ansible machine. |
+
+### Phase 4: Disaster Recovery & PITR Operations
+| Task | Exact Command | Purpose |
+| :--- | :--- | :--- |
+| **Full Disaster Restore (Latest Backup)** | `ansible-playbook playbooks/08_restore_disaster_recovery.yml` | Restores the database from the latest snapshot on the cluster. |
+| **Point-In-Time-Recovery (PITR)** | `ansible-playbook playbooks/08_restore_disaster_recovery.yml -e "restore_oplog_limit='<SEC>:<INC>' restore_drop=true"` | Replay oplog up to a specific timestamp, stopping right before accidental data deletion. |
+| **PITR via Helper Script** | `./scripts/restore_pitr.sh --oplog-limit='1712839200:1'` | Command-line wrapper to trigger PITR restore. |
+
+### Phase 5: Zero-Downtime Rolling Upgrade
+| Task | Exact Command | Purpose |
+| :--- | :--- | :--- |
+| **Execute 7.0 $\rightarrow$ 8.0 Rolling Upgrade** | `ansible-playbook playbooks/09_rolling_upgrade.yml -e "target_upgrade_version=8.0 target_feature_compatibility_version=8.0"` | Orchestrate zero-downtime sequential binary upgrade across all nodes. |
+| **Check Cluster Versions & FCV** | `./scripts/rolling_upgrade_check.sh <PRIMARY_IP> 27017 clusterAdmin "<PASSWORD>"` | Check current engine version and featureCompatibilityVersion on all nodes. |
+
+### Phase 6: Health Checks & Cluster Diagnostics
+| Task | Exact Command | Purpose |
+| :--- | :--- | :--- |
+| **Verify Replica Set Health** | `./scripts/verify_cluster.sh <PRIMARY_IP> 27017 clusterAdmin "<PASSWORD>"` | Inspect node health, election state, priority, and replication lag. |
+| **Test Live Replication Sync** | `ansible-playbook playbooks/10_test_replication_sync.yml` | Insert 50 test documents on Primary and assert replication to Secondaries in $<2\text{s}$. |
+
+### Phase 7: Application Resilience Test Suite
+| Task | Exact Command | Purpose |
+| :--- | :--- | :--- |
+| **Install Test App Dependencies** | `cd test-app && npm install` | Install official MongoDB Node.js driver. |
+| **Verify Read/Write Splitting** | `npm start` (or `node test-read-write.js`) | Test read/write connection string and ensure secondary reads succeed. |
+| **Continuous Live Write Generator** | `npm run writer` | Insert documents continuously to generate live workload. |
+| **Continuous Secondary Reader** | `npm run reader` | Continuous reading from secondaries to verify consistency. |
+| **Failover Resilience Test** | `npm run resilience` | Stream continuous writes while a failover or rolling upgrade takes place. |
+| **End-to-End PITR Disaster Test** | `npm run dr-test` | Simulates writes, records drop timestamp, triggers PITR, and validates recovery. |
+
+### Phase 8: Cluster Teardown (Clean State Wipe)
+| Task | Exact Command | Purpose |
+| :--- | :--- | :--- |
+| **Complete Cluster Teardown** | `ansible-playbook playbooks/99_teardown_cluster.yml` | Stop services, purge packages, wipe `/var/lib/mongodb`, delete keyfiles, and reset firewall rules. |
 
 ---
 
-## 7. Teardown & Reset
+## 5. Verified Repository Structure
 
-To completely wipe all MongoDB installations, backups, firewall rules, and keyfiles for a clean state:
-```bash
-ansible-playbook playbooks/99_teardown_cluster.yml
+Every file in this repository is active and serves a dedicated purpose:
+
 ```
-
+mongodb-enterprise-cluster/
+├── README.md                                  # Complete enterprise documentation and architecture guide
+├── ansible.cfg                                # Ansible configuration (inventory path, SSH tuning)
+├── inventory/
+│   ├── hosts.ini                              # Node inventory (Primary, Secondaries, IPs, priorities)
+│   └── group_vars/
+│       └── all.yml                            # Global cluster variables, credentials, firewall IPs
+├── keys/
+│   └── MyKeyPair.pem                          # SSH private key for node management (chmod 600)
+├── playbooks/
+│   ├── site.yml                               # Master deployment orchestration playbook
+│   ├── 01_system_prep.yml                     # OS tuning, swap, kernel parameters
+│   ├── 02_install_mongodb.yml                 # MongoDB repository & package installation
+│   ├── 03_configure_mongodb.yml               # mongod.conf deployment & keyfile sync
+│   ├── 04_init_replicaset.yml                 # Replica set initialization & RBAC creation
+│   ├── 05_setup_firewall_access.yml           # Kernel firewall (UFW) access control binding
+│   ├── 06_setup_automated_backups.yml         # Secondary-targeted systemd timer backup setup
+│   ├── 07_trigger_manual_backup.yml           # On-demand snapshot trigger & controller fetch
+│   ├── 08_restore_disaster_recovery.yml       # Full disaster recovery & PITR oplog replay
+│   ├── 09_rolling_upgrade.yml                 # Zero-downtime rolling version upgrade (7.0 -> 8.0)
+│   ├── 10_test_replication_sync.yml           # Automated replication latency verification
+│   ├── 11_test_client_access_control.yml      # Firewall state and policy assertion
+│   ├── reconfig_public_ips.yml                # Dynamic replica set public IP reconfiguration
+│   ├── 99_teardown_cluster.yml                # Cluster wipe and clean state reset
+│   └── tasks/
+│       └── verify_fcv.yml                     # Reusable task for checking FeatureCompatibilityVersion
+├── scripts/
+│   ├── restore_pitr.sh                        # CLI helper for disaster recovery & PITR replay
+│   ├── rolling_upgrade_check.sh               # CLI helper for checking version and FCV
+│   ├── test_client_access.sh                  # CLI network connectivity and firewall tester
+│   ├── trigger_backup.sh                      # CLI helper to trigger immediate backup
+│   └── verify_cluster.sh                      # CLI helper for replica set health & lag check
+├── security/
+│   └── mongo-keyfile                          # 1024-bit internal cluster authentication key
+├── templates/
+│   ├── mongod.conf.j2                         # Jinja2 template for MongoDB configuration
+│   ├── mongodb-backup.service.j2              # Systemd service template for backups
+│   ├── mongodb-backup.timer.j2                # Systemd timer template for backup scheduling
+│   ├── mongodb_backup.sh.j2                   # Secondary backup script template with SHA-256
+│   └── restore_pitr.sh.j2                     # PITR restoration script template
+└── test-app/
+    ├── package.json                           # Node.js test suite package definition
+    ├── test-read-write.js                     # Read/Write splitting validation
+    ├── writer.js                              # Continuous write workload generator
+    ├── reader.js                              # Continuous secondary read verifier
+    ├── failover-resilience-test.js            # Zero-downtime failover resilience test
+    ├── disaster-recovery-test.js              # Complete PITR recovery validation test
+    ├── check-cluster-version.js               # Node.js cluster version inspector
+    └── debug-connect.js                       # Connection string diagnostic tool
+```
