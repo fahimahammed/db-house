@@ -1,0 +1,16 @@
+{
+  "name": "mongodb-enterprise-test-suite",
+  "version": "1.0.0",
+  "description": "High-availability, failover, and read/write splitting test suite for MongoDB Enterprise Cluster",
+  "main": "test-read-write.js",
+  "scripts": {
+    "start": "node test-read-write.js",
+    "writer": "node writer.js",
+    "reader": "node reader.js",
+    "resilience": "node failover-resilience-test.js"
+  },
+  "dependencies": {
+    "mongodb": "^6.21.0"
+  }
+}
+

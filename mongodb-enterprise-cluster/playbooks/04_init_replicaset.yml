@@ -1,0 +1,85 @@
+---
+- name: "Phase 4 - Initialize Replica Set Cluster & Provision Users"
+  hosts: mongodb_primary
+  become: true
+  tasks:
+    - name: Check replica set initialization status
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} --quiet --eval "try { rs.status().ok } catch(e) { 0 }"
+      register: rs_status_raw
+      changed_when: false
+
+    - name: Initiate Replica Set with Primary node
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} --quiet --eval '
+          rs.initiate({
+            _id: "{{ mongo_replset_name }}",
+            members: [{ _id: 0, host: "{{ private_ip | default(ansible_host) }}:{{ mongo_port }}", priority: {{ mongo_priority | default(2) }} }]
+          })
+        '
+      when: "'1' not in rs_status_raw.stdout"
+
+    - name: Wait for node to become PRIMARY
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} --quiet --eval "try { rs.isMaster().ismaster } catch(e) { false }"
+      register: wait_primary
+      until: wait_primary.stdout.find('true') != -1
+      retries: 30
+      delay: 2
+      changed_when: false
+
+    - name: Provision Cluster Admin (clusterAdmin) & Application (appUser) Users
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin --quiet --eval '
+          if (!db.getUser("{{ mongo_admin_user }}")) {
+            db.createUser({
+              user: "{{ mongo_admin_user }}",
+              pwd: "{{ mongo_admin_password }}",
+              roles: ["root", "clusterAdmin", "userAdminAnyDatabase"]
+            });
+            print("ADMIN_CREATED");
+          }
+          let appDb = db.getSiblingDB("{{ mongo_app_db }}");
+          if (!appDb.getUser("{{ mongo_app_user }}")) {
+            appDb.createUser({
+              user: "{{ mongo_app_user }}",
+              pwd: "{{ mongo_app_password }}",
+              roles: [{ role: "readWrite", db: "{{ mongo_app_db }}" }]
+            });
+            print("APP_USER_CREATED");
+          }
+        '
+      register: user_provision_out
+      changed_when: "'CREATED' in user_provision_out.stdout"
+
+    - name: Add Secondary Nodes to Replica Set
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          let members = rs.status().members.map(m => m.name);
+          let target = "{{ hostvars[item].private_ip | default(hostvars[item].ansible_host) }}:{{ mongo_port }}";
+          if (!members.includes(target)) {
+            rs.add({
+              _id: {{ hostvars[item].mongo_member_id }},
+              host: target,
+              priority: {{ hostvars[item].mongo_priority | default(1) }},
+              votes: {{ hostvars[item].mongo_votes | default(1) }}
+            });
+            print("ADDED");
+          }
+        '
+      loop: "{{ groups['mongodb_secondary'] }}"
+      register: add_sec_out
+      changed_when: "'ADDED' in add_sec_out.stdout"
+
+    - name: Verify Replica Set Health
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          let s = rs.status();
+          print("Replica Set: " + s.set + " | Members: " + s.members.length + " | OK: " + s.ok);
+        '
+      register: repl_check
+      changed_when: false
+
+    - name: Display Status
+      ansible.builtin.debug:
+        msg: "🎉 {{ repl_check.stdout }}"

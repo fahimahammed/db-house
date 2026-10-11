@@ -1,0 +1,64 @@
+---
+# ==============================================================================
+# Zero-Downtime Rolling Upgrade Orchestration
+# Usage:
+#   ansible-playbook playbooks/09_rolling_upgrade.yml -e "target_upgrade_version=8.0 target_feature_compatibility_version=8.0"
+# ==============================================================================
+
+- name: "Step 1 - Pre-flight Health Check on Primary"
+  hosts: mongodb_primary
+  become: true
+  tasks:
+    - name: Verify cluster health before upgrade
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --authenticationDatabase admin --quiet --eval '
+          let status = rs.status();
+          let unhealthy = status.members.filter(m => m.health !== 1);
+          if (unhealthy.length > 0) throw new Error("Unhealthy members: " + JSON.stringify(unhealthy.map(m => m.name)));
+          print("PREFLIGHT_OK");
+        '
+      changed_when: false
+
+- name: "Step 2 - Sequentially Upgrade Secondary Nodes"
+  hosts: mongodb_secondary
+  serial: 1
+  become: true
+  tasks:
+    - name: Perform rolling upgrade on secondary node
+      ansible.builtin.include_tasks: tasks/upgrade_node.yml
+
+- name: "Step 3 - Gracefully Stepdown Primary"
+  hosts: mongodb_primary
+  become: true
+  tasks:
+    - name: Trigger Primary stepdown to elect an upgraded Secondary
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --authenticationDatabase admin --eval "try { rs.stepDown(60); } catch(e) {}"
+      ignore_errors: true
+
+    - name: Wait for former primary to settle into SECONDARY state
+      ansible.builtin.pause:
+        seconds: 5
+
+- name: "Step 4 - Upgrade Former Primary Node"
+  hosts: mongodb_primary
+  become: true
+  tasks:
+    - name: Upgrade former primary node
+      ansible.builtin.include_tasks: tasks/upgrade_node.yml
+
+- name: "Step 5 - Finalize Feature Compatibility Version (FCV)"
+  hosts: mongodb_cluster
+  run_once: true
+  become: true
+  tasks:
+    - name: Set Feature Compatibility Version to {{ target_feature_compatibility_version }}
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --authenticationDatabase admin --quiet --eval '
+          let res = db.adminCommand({ setFeatureCompatibilityVersion: "{{ target_feature_compatibility_version }}" });
+          print("FCV_UPDATED: " + JSON.stringify(res));
+        '
+
+    - name: Final Upgrade Confirmation
+      ansible.builtin.debug:
+        msg: "🎉 Zero-downtime rolling upgrade to MongoDB {{ target_upgrade_version }} completed successfully!"

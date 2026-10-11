@@ -1,0 +1,27 @@
+---
+- name: "Phase 7 - Trigger Manual On-Demand Backup"
+  hosts: "{{ backup_target_node | default(groups['mongodb_secondary'][0] | default(groups['mongodb_primary'][0])) }}"
+  become: true
+  vars:
+    fetch_to_controller: false
+    controller_backup_dir: "{{ playbook_dir }}/../backups"
+  tasks:
+    - name: Execute backup script
+      ansible.builtin.command: /usr/local/bin/mongodb_backup.sh
+      register: backup_run
+
+    - name: Get latest generated archive file
+      ansible.builtin.shell: ls -t {{ backup_dir }}/mongo_backup_*.archive.gz | head -n 1
+      register: latest_archive
+      changed_when: false
+
+    - name: Display backup summary
+      ansible.builtin.debug:
+        msg: "🎉 Manual backup created successfully: {{ latest_archive.stdout }}"
+
+    - name: Download backup archive to controller (if requested)
+      when: fetch_to_controller | bool
+      ansible.builtin.fetch:
+        src: "{{ latest_archive.stdout }}"
+        dest: "{{ controller_backup_dir }}/"
+        flat: true

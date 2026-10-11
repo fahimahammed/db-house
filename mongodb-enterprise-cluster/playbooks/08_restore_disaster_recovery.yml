@@ -1,0 +1,52 @@
+---
+- name: "Phase 8 - Disaster Recovery & Point-In-Time Restore"
+  hosts: mongodb_primary
+  become: true
+  vars:
+    restore_archive: ""
+    restore_drop: true
+    restore_oplog_limit: ""
+  tasks:
+    - name: Deploy PITR restore helper script
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/restore_pitr.sh.j2"
+        dest: /usr/local/bin/restore_pitr.sh
+        mode: '0750'
+
+    - name: Locate latest backup archive if not explicitly specified
+      when: restore_archive == ""
+      ansible.builtin.shell: ls -t {{ backup_dir }}/mongo_backup_*.archive.gz 2>/dev/null | head -n 1
+      register: auto_archive
+      changed_when: false
+
+    - name: Resolve archive target
+      ansible.builtin.set_fact:
+        target_archive: "{{ restore_archive if restore_archive != '' else auto_archive.stdout }}"
+
+    - name: Validate backup archive exists
+      ansible.builtin.fail:
+        msg: "No backup archive found in {{ backup_dir }}. Pass -e 'restore_archive=/path/to/archive.gz'"
+      when: target_archive == ""
+
+    - name: Execute Disaster Recovery Restore via mongorestore
+      ansible.builtin.shell: >
+        /usr/local/bin/restore_pitr.sh
+        --archive="{{ target_archive }}"
+        {% if restore_drop | bool %}--drop{% endif %}
+        {% if restore_oplog_limit != "" %}--oplog-limit="{{ restore_oplog_limit }}"{% endif %}
+      register: restore_out
+
+    - name: Verify restored database list
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --authenticationDatabase admin --quiet --eval '
+          db.adminCommand({ listDatabases: 1 }).databases.forEach(d => print("  -> " + d.name + " (" + (d.sizeOnDisk/(1024*1024)).toFixed(2) + " MB)"));
+        '
+      register: dbs_out
+      changed_when: false
+
+    - name: Recovery Confirmation
+      ansible.builtin.debug:
+        msg:
+          - "🎉 DISASTER RECOVERY RESTORE COMPLETED!"
+          - "Target Archive: {{ target_archive }}"
+          - "{{ dbs_out.stdout_lines }}"

@@ -1,0 +1,36 @@
+---
+- name: "Phase 10.1 - Insert Test Batch on Primary"
+  hosts: mongodb_primary
+  become: true
+  tasks:
+    - name: Write 50 test documents on Primary
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --authenticationDatabase admin --quiet --eval '
+          let col = db.getSiblingDB("{{ mongo_app_db }}").replication_test;
+          col.drop();
+          let docs = Array.from({length: 50}, (_, i) => ({ test_id: i + 1, time: new Date() }));
+          col.insertMany(docs);
+        '
+      changed_when: true
+
+    - name: Wait 2 seconds for WAN replication
+      ansible.builtin.pause:
+        seconds: 2
+
+- name: "Phase 10.2 - Verify Replication on Secondaries"
+  hosts: mongodb_secondary
+  become: true
+  tasks:
+    - name: Check document count on Secondary
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --authenticationDatabase admin --quiet --eval '
+          print(db.getSiblingDB("{{ mongo_app_db }}").replication_test.countDocuments());
+        '
+      register: doc_count
+      changed_when: false
+
+    - name: Assert exact document count equals 50
+      ansible.builtin.assert:
+        that: doc_count.stdout | trim == '50'
+        fail_msg: "❌ Replication mismatch on {{ inventory_hostname }}: expected 50, found {{ doc_count.stdout }}"
+        success_msg: "✅ Secondary {{ inventory_hostname }} has exactly 50 replicated documents (Lag = 0s)!"

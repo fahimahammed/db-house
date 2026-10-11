@@ -1,0 +1,60 @@
+---
+- name: "Phase 5 - Bind MongoDB Port to Allowed Application Servers & Cluster Nodes"
+  hosts: mongodb_cluster
+  become: true
+  vars:
+    # Combine cluster peer IPs and authorized application server IPs into a single deduplicated list
+    cluster_ips: >-
+      {{
+        (groups['mongodb_cluster'] | map('extract', hostvars, 'private_ip') | reject('undefined') | list) +
+        (groups['mongodb_cluster'] | map('extract', hostvars, 'ansible_host') | reject('undefined') | list)
+      }}
+    all_allowed_ips: "{{ (cluster_ips + (mongo_allowed_app_clients | default([]))) | unique }}"
+  tasks:
+    - name: Ensure UFW is installed
+      ansible.builtin.apt:
+        name: ufw
+        state: present
+
+    - name: Allow SSH management port ({{ ssh_port | default(22) }})
+      community.general.ufw:
+        rule: allow
+        port: "{{ ssh_port | default('22') }}"
+        proto: tcp
+
+    - name: Allow loopback traffic
+      community.general.ufw:
+        rule: allow
+        interface: lo
+
+    - name: Allow MongoDB port {{ mongo_port }} from cluster peers and authorized app servers
+      community.general.ufw:
+        rule: allow
+        from_ip: "{{ item }}"
+        port: "{{ mongo_port }}"
+        proto: tcp
+      loop: "{{ all_allowed_ips }}"
+
+    - name: Block all other incoming traffic to MongoDB port {{ mongo_port }}
+      community.general.ufw:
+        rule: deny
+        port: "{{ mongo_port }}"
+        proto: tcp
+
+    - name: Enforce UFW default policies & enable service
+      community.general.ufw:
+        direction: "{{ item.dir }}"
+        policy: "{{ item.policy }}"
+        state: enabled
+      loop:
+        - { dir: incoming, policy: deny }
+        - { dir: outgoing, policy: allow }
+
+    - name: Display active firewall rules
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status
+      changed_when: false
+
+    - name: Firewall Confirmation
+      ansible.builtin.debug:
+        msg: "✅ MongoDB access successfully bound to: {{ all_allowed_ips }}"

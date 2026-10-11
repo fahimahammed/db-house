@@ -1,0 +1,62 @@
+---
+- name: "Phase 3.1 - Generate Shared Cluster Keyfile on Controller"
+  hosts: localhost
+  connection: local
+  tasks:
+    - name: Ensure security directory exists
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../security"
+        state: directory
+        mode: '0700'
+
+    - name: Generate high-entropy 1024-byte keyfile if missing
+      ansible.builtin.shell: "openssl rand -base64 756 > {{ playbook_dir }}/../security/mongo-keyfile && chmod 0400 {{ playbook_dir }}/../security/mongo-keyfile"
+      args:
+        creates: "{{ playbook_dir }}/../security/mongo-keyfile"
+
+- name: "Phase 3.2 - Configure MongoDB & Distribute Keyfile"
+  hosts: mongodb_cluster
+  become: true
+  tasks:
+    - name: Ensure keyfile directory exists
+      ansible.builtin.file:
+        path: "{{ mongo_keyfile_dir }}"
+        state: directory
+        owner: mongodb
+        group: mongodb
+        mode: '0700'
+
+    - name: Distribute cluster keyfile
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../security/mongo-keyfile"
+        dest: "{{ mongo_keyfile_path }}"
+        owner: mongodb
+        group: mongodb
+        mode: '0400'
+
+    - name: Deploy tuned mongod.conf
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/mongod.conf.j2"
+        dest: "{{ mongo_conf_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Restart mongod
+
+    - name: Ensure mongod service is started and enabled
+      ansible.builtin.systemd:
+        name: mongod
+        state: started
+        enabled: true
+
+    - name: Wait for MongoDB port {{ mongo_port }}
+      ansible.builtin.wait_for:
+        port: "{{ mongo_port }}"
+        host: "127.0.0.1"
+        timeout: 30
+
+  handlers:
+    - name: Restart mongod
+      ansible.builtin.systemd:
+        name: mongod
+        state: restarted

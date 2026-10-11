@@ -1,0 +1,43 @@
+---
+- name: "Phase 2 - Install MongoDB & Pin Packages"
+  hosts: mongodb_cluster
+  become: true
+  tasks:
+    - name: Download & de-armor MongoDB GPG key
+      ansible.builtin.shell: >
+        mkdir -p /etc/apt/keyrings &&
+        curl -fsSL https://www.mongodb.org/static/pgp/server-{{ mongo_version }}.asc |
+        gpg --dearmor --yes -o /etc/apt/keyrings/mongodb-server-{{ mongo_version }}.gpg
+      changed_when: false
+
+    - name: Add official MongoDB apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [ arch=amd64,arm64 signed-by=/etc/apt/keyrings/mongodb-server-{{ mongo_version }}.gpg ] https://repo.mongodb.org/apt/ubuntu {{ ansible_distribution_release if ansible_distribution_release in ['jammy', 'focal'] else 'jammy' }}/mongodb-org/{{ mongo_version }} multiverse"
+        state: present
+        filename: "mongodb-org-{{ mongo_version }}"
+        update_cache: true
+
+    - name: Install MongoDB packages
+      ansible.builtin.apt:
+        name: [mongodb-org, mongodb-org-server, mongodb-org-mongos, mongodb-org-tools, mongodb-mongosh]
+        state: present
+
+    - name: Pin MongoDB packages to prevent accidental updates
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: [mongodb-org, mongodb-org-server, mongodb-org-mongos, mongodb-org-tools, mongodb-mongosh]
+
+    - name: Ensure MongoDB directories exist with correct ownership
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: mongodb
+        group: mongodb
+        mode: '0750'
+      loop: ["{{ mongo_data_dir }}", "{{ mongo_log_dir }}"]
+
+    - name: Ensure mongod service is enabled on boot
+      ansible.builtin.systemd:
+        name: mongod
+        enabled: true

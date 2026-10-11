@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Script: restore_pitr.sh
+# Purpose: Disaster Recovery & Point-In-Time Recovery (PITR) with Oplog Replay
+# Managed by Ansible - Do NOT edit manually.
+# ==============================================================================
+
+set -euo pipefail
+
+MONGO_PORT="{{ mongo_port }}"
+ADMIN_USER="{{ mongo_admin_user }}"
+ADMIN_PASS="{{ mongo_admin_password }}"
+
+usage() {
+  echo "Usage: $0 --archive=<path_to_archive> [--oplog-limit=<sec:inc>] [--drop]"
+  echo ""
+  echo "Options:"
+  echo "  --archive=<path>       Path to .archive.gz backup file (Required)"
+  echo "  --oplog-limit=<limit>  Point-In-Time timestamp limit (e.g., 1712839200:1)"
+  echo "  --drop                 Drop existing collections before restoring"
+  echo "  --help                 Show this help message"
+  exit 1
+}
+
+ARCHIVE_PATH=""
+OPLOG_LIMIT=""
+DROP_FLAG=""
+
+for arg in "$@"; do
+  case $arg in
+    --archive=*)
+      ARCHIVE_PATH="${arg#*=}"
+      shift
+      ;;
+    --oplog-limit=*)
+      OPLOG_LIMIT="${arg#*=}"
+      shift
+      ;;
+    --drop)
+      DROP_FLAG="--drop"
+      shift
+      ;;
+    --help)
+      usage
+      ;;
+  esac
+done
+
+if [[ -z "${ARCHIVE_PATH}" ]]; then
+  echo "ERROR: --archive is required!"
+  usage
+fi
+
+if [[ ! -f "${ARCHIVE_PATH}" ]]; then
+  echo "ERROR: Backup archive file not found: ${ARCHIVE_PATH}"
+  exit 1
+fi
+
+echo "========================================================================"
+echo " MONGODB DISASTER RECOVERY & RESTORE PROCEDURE"
+echo " Archive: ${ARCHIVE_PATH}"
+echo "========================================================================"
+
+# Step 1: Check SHA256 if .sha256 checksum exists
+if [[ -f "${ARCHIVE_PATH}.sha256" ]]; then
+  echo "--> Verifying SHA256 checksum integrity..."
+  EXPECTED_SHA=$(cat "${ARCHIVE_PATH}.sha256")
+  ACTUAL_SHA=$(sha256sum "${ARCHIVE_PATH}" | awk '{print $1}')
+  if [[ "${EXPECTED_SHA}" != "${ACTUAL_SHA}" ]]; then
+    echo "❌ FATAL: Checksum mismatch!"
+    echo "   Expected: ${EXPECTED_SHA}"
+    echo "   Actual:   ${ACTUAL_SHA}"
+    exit 1
+  fi
+  echo "✅ Checksum verification passed!"
+fi
+
+# Step 2: Build mongorestore command
+RESTORE_CMD=(
+  mongorestore
+  --host "127.0.0.1"
+  --port "${MONGO_PORT}"
+  -u "${ADMIN_USER}"
+  -p "${ADMIN_PASS}"
+  --authenticationDatabase admin
+  --gzip
+  --archive="${ARCHIVE_PATH}"
+  --oplogReplay
+)
+
+if [[ -n "${DROP_FLAG}" ]]; then
+  RESTORE_CMD+=("${DROP_FLAG}")
+fi
+
+if [[ -n "${OPLOG_LIMIT}" ]]; then
+  echo "--> Point-in-time recovery limit set to: ${OPLOG_LIMIT}"
+  RESTORE_CMD+=(--oplogLimit "${OPLOG_LIMIT}")
+fi
+
+echo "--> Executing Restore: ${RESTORE_CMD[*]}"
+"${RESTORE_CMD[@]}"
+
+echo ""
+echo "========================================================================"
+echo "✅ RESTORE COMPLETED SUCCESSFULLY!"
+echo "========================================================================"
+exit 0
+

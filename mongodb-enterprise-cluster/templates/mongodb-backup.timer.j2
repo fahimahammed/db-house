@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer for Automated Enterprise MongoDB Cluster Backup
+RefuseManualStart=no
+RefuseManualStop=no
+
+[Timer]
+OnCalendar={{ backup_systemd_schedule }}
+Persistent=true
+Unit=mongodb-backup.service
+
+[Install]
+WantedBy=timers.target
+

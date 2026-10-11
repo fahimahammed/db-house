@@ -1,0 +1,20 @@
+---
+- name: "Phase 11 - Validate Access Restriction & Firewall Rules"
+  hosts: mongodb_cluster
+  become: true
+  tasks:
+    - name: Query UFW status
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status
+      changed_when: false
+
+    - name: Validate firewall state & default deny policy
+      ansible.builtin.assert:
+        that:
+          - "'Status: active' in ufw_status.stdout"
+          - "'Default: deny (incoming)' in ufw_status.stdout"
+        success_msg: "✅ UFW is ACTIVE and incoming traffic is strictly set to DENY on {{ inventory_hostname }}."
+
+    - name: Access Control Summary
+      ansible.builtin.debug:
+        msg: "🛡️ Server {{ inventory_hostname }} is protected. Only cluster nodes and {{ mongo_allowed_app_clients | default([]) }} can reach port {{ mongo_port }}."

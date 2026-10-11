@@ -1,0 +1,70 @@
+---
+- name: "Teardown & Clean All MongoDB Enterprise Cluster Nodes"
+  hosts: mongodb_cluster
+  become: true
+  tasks:
+    - name: Stop and disable MongoDB, backup, and THP services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: [mongodb-backup.timer, mongodb-backup.service, mongod, disable-thp.service]
+      failed_when: false
+
+    - name: Reset UFW firewall rules
+      community.general.ufw:
+        state: reset
+      failed_when: false
+
+    - name: Allow SSH port after reset
+      community.general.ufw:
+        rule: allow
+        port: "{{ ssh_port | default('22') }}"
+        proto: tcp
+      failed_when: false
+
+    - name: Unhold and purge MongoDB packages
+      ansible.builtin.shell: apt-mark unhold mongodb-org mongodb-org-server mongodb-org-mongos mongodb-org-tools mongodb-mongosh 2>/dev/null || true
+      changed_when: false
+
+    - name: Purge MongoDB apt packages
+      ansible.builtin.apt:
+        name: [mongodb-org, mongodb-org-server, mongodb-org-mongos, mongodb-org-tools, mongodb-mongosh]
+        state: absent
+        purge: true
+      failed_when: false
+
+    - name: Remove MongoDB data, logs, keys, backups, and systemd units
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ mongo_data_dir | default('/var/lib/mongodb') }}"
+        - "{{ mongo_log_dir | default('/var/log/mongodb') }}"
+        - "{{ mongo_keyfile_dir | default('/etc/mongodb') }}"
+        - "{{ mongo_conf_path | default('/etc/mongod.conf') }}"
+        - "{{ backup_dir | default('/var/backups/mongodb') }}"
+        - /etc/systemd/system/mongodb-backup.service
+        - /etc/systemd/system/mongodb-backup.timer
+        - /etc/systemd/system/disable-thp.service
+        - /etc/sysctl.d/99-mongodb.conf
+        - /etc/security/limits.d/99-mongodb.conf
+        - /usr/local/bin/mongodb_backup.sh
+        - /usr/local/bin/restore_pitr.sh
+
+    - name: Reload systemd & sysctl
+      ansible.builtin.shell: systemctl daemon-reload && sysctl --system
+      changed_when: false
+
+    - name: Node Cleared Notification
+      ansible.builtin.debug:
+        msg: "✅ Node {{ inventory_hostname }} wiped and reset."
+
+- name: "Clean Controller Keys"
+  hosts: localhost
+  connection: local
+  tasks:
+    - name: Remove local keyfile
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../security/mongo-keyfile"
+        state: absent

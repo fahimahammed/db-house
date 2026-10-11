@@ -8,10 +8,11 @@ Production-Grade Database Infrastructure & Automation Repository.
 
 | Component | Description | Path |
 | :--- | :--- | :--- |
-| **MongoDB Cluster** | Production-ready 3-node MongoDB 7.0 replica set automation across multi-AZ subnets | [`mongodb-cluster/`](file:///Users/fahimahammedfiroz/Projects/db-house/mongodb-cluster/README.md) |
-| **AWS Infrastructure (IaC)** | Pulumi script provisioning AWS VPC, multi-AZ subnets, security groups, and EC2 instances | [`pulumi/`](file:///Users/fahimahammedfiroz/Projects/db-house/pulumi/) |
-| **Ansible Lab & Guides** | Ansible cheat sheet, modular playbooks, Jinja2 templates, and task simulations | [`ansible/`](file:///Users/fahimahammedfiroz/Projects/db-house/ansible/README.md) |
-| **Automation Makefile** | Quick commands to manage Pulumi cloud resources, clean caches, and tear down instances | [`Makefile`](file:///Users/fahimahammedfiroz/Projects/db-house/Makefile) |
+| **MongoDB Enterprise Cluster** | **Production-grade HA cluster with App Server Binding, Automated Backups, PITR Disaster Recovery & Zero-Downtime Migration** | [`mongodb-enterprise-cluster/`](mongodb-enterprise-cluster/README.md) |
+| **MongoDB Cluster** | Production-ready 3-node MongoDB 7.0 replica set automation across multi-AZ subnets | [`mongodb-cluster/`](mongodb-cluster/README.md) |
+| **AWS Infrastructure (IaC)** | Pulumi script provisioning AWS VPC, multi-AZ subnets, security groups, and EC2 instances | [`pulumi/`](pulumi/) |
+| **Ansible Lab & Guides** | Ansible cheat sheet, modular playbooks, Jinja2 templates, and task simulations | [`ansible/`](ansible/README.md) |
+| **Automation Makefile** | Quick commands to manage Pulumi cloud resources, clean caches, and tear down instances | [`Makefile`](Makefile) |
 
 ---
 

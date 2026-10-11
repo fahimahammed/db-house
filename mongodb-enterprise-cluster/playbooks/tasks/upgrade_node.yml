@@ -1,0 +1,56 @@
+---
+# Reusable task: Upgrade a single MongoDB node to target_upgrade_version
+- name: Unhold current MongoDB packages
+  ansible.builtin.shell: apt-mark unhold mongodb-org mongodb-org-server mongodb-org-mongos mongodb-org-tools mongodb-mongosh 2>/dev/null || true
+  changed_when: false
+
+- name: Update MongoDB GPG key for target version
+  ansible.builtin.shell: >
+    curl -fsSL https://www.mongodb.org/static/pgp/server-{{ target_upgrade_version }}.asc |
+    gpg --dearmor --yes -o /etc/apt/keyrings/mongodb-server-{{ target_upgrade_version }}.gpg
+  changed_when: false
+
+- name: Configure MongoDB apt repository for {{ target_upgrade_version }}
+  ansible.builtin.apt_repository:
+    repo: "deb [ arch=amd64,arm64 signed-by=/etc/apt/keyrings/mongodb-server-{{ target_upgrade_version }}.gpg ] https://repo.mongodb.org/apt/ubuntu {{ ansible_distribution_release if ansible_distribution_release in ['jammy', 'focal'] else 'jammy' }}/mongodb-org/{{ target_upgrade_version }} multiverse"
+    state: present
+    filename: "mongodb-org-{{ target_upgrade_version }}"
+    update_cache: true
+
+- name: Upgrade MongoDB packages to {{ target_upgrade_version }}
+  ansible.builtin.apt:
+    name: [mongodb-org, mongodb-org-server, mongodb-org-mongos, mongodb-org-tools, mongodb-mongosh]
+    state: latest
+    update_cache: true
+
+- name: Pin upgraded MongoDB packages
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: [mongodb-org, mongodb-org-server, mongodb-org-mongos, mongodb-org-tools, mongodb-mongosh]
+
+- name: Restart mongod service
+  ansible.builtin.systemd:
+    name: mongod
+    state: restarted
+
+- name: Wait for MongoDB port {{ mongo_port }}
+  ansible.builtin.wait_for:
+    port: "{{ mongo_port }}"
+    host: "127.0.0.1"
+    timeout: 30
+
+- name: Wait for node to rejoin replica set
+  ansible.builtin.shell: >
+    mongosh --port {{ mongo_port }} -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --authenticationDatabase admin --quiet --eval '
+      try {
+        let me = rs.status().members.find(m => m.self === true);
+        print(me.stateStr);
+      } catch(e) { print("WAITING"); }
+    '
+  register: rejoin_check
+  until: rejoin_check.stdout.find('SECONDARY') != -1 or rejoin_check.stdout.find('PRIMARY') != -1
+  retries: 30
+  delay: 2
+  changed_when: false
+

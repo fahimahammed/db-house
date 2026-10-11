@@ -1,0 +1,15 @@
+---
+# ==============================================================================
+# Master Orchestration Playbook - MongoDB Enterprise Cluster
+# Full automated provisioning, replica set initialization, firewall binding,
+# automated backup scheduling, and replication verification.
+# ==============================================================================
+
+- import_playbook: 01_system_prep.yml
+- import_playbook: 02_install_mongodb.yml
+- import_playbook: 03_configure_mongodb.yml
+- import_playbook: 04_init_replicaset.yml
+- import_playbook: 05_setup_firewall_access.yml
+- import_playbook: 06_setup_automated_backups.yml
+- import_playbook: 10_test_replication_sync.yml
+

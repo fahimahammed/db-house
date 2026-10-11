@@ -1,0 +1,15 @@
+[Unit]
+Description=Automated Enterprise MongoDB Cluster Backup
+After=network.target mongod.service
+Requires=mongod.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/mongodb_backup.sh
+StandardOutput=append:{{ backup_log_file }}
+StandardError=append:{{ backup_log_file }}
+
+[Install]
+WantedBy=multi-user.target
+
