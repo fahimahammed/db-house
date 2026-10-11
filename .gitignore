@@ -5,3 +5,4 @@ mongodb-cluster/security/
 node_modules/
 venv/
 .env
+MyKeyPair.*

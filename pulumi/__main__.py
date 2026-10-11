@@ -77,7 +77,18 @@ sec_group = aws.ec2.SecurityGroup(
 # AMI ID (Ubuntu 24.04 LTS for ap-southeast-1)
 # Update this AMI ID if you are using a different AWS region
 ami_id = "ami-060e277c0d4cce553"
-key_name = "MyKeyPair"
+
+# 4.1 Automatically import/create the EC2 Key Pair in AWS
+key_pair = aws.ec2.KeyPair(
+    "custom-keypair",
+    key_name="MyKeyPair",
+    public_key=(
+        "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDa34YRUkoFbZSO6lwHkcPGkWu8OciyWbL4H30JmDbYS0Ve/Zc/Kq8PsR42ElGylck"
+        "Nbt3tXogykoFD4FU7z/hQ9ERb1u6GHrYmRjMED/uaDBL//7WqdbHvbxQiYaAUFDqZlB+zOxTJUuUg1+fWRi5klnroHayI+CIlPGDhaY"
+        "wnFqm38ByMGXBUJjxwf3GV8UFHfpyqgtiTXLfyJf+mcLTblh7Y1noG49Ocz70la1lDNWOpBDfIGcyK9HHy5RBd+UycfSYrq/VaNz53wc"
+        "SL9wz4YJT4+wcX4YMHdjfDjKuWRKTltLZRV7Ggl2i9xMDkrVqUmAarrTiZyVU1nH+4oXdh"
+    ),
+)
 
 # 5. Create 3 Subnets, associate them with Route Table, and launch an EC2 instance in each
 created_subnets = []
@@ -109,7 +120,7 @@ for idx, config in enumerate(subnets_config, start=1):
         ami=ami_id,
         subnet_id=subnet.id,
         vpc_security_group_ids=[sec_group.id],
-        key_name=key_name,
+        key_name=key_pair.key_name,
         associate_public_ip_address=True,
         tags={"Name": f"ec2-instance-{idx}"},
     )
