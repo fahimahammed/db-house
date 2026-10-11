@@ -34,10 +34,7 @@ ssh_port: 22
 
 # List of application servers allowed to access MongoDB (supports single IPs & CIDRs)
 mongo_allowed_app_clients:
-  - "10.0.10.15"       # App Server 1 (Backend API)
-  - "10.0.10.16"       # App Server 2 (Worker)
-  - "10.0.20.0/24"     # Microservices Subnet
-  # - "203.0.113.50"   # External Partner / BI Server (example)
+  - "103.76.154.230"
 
 # ------------------------------------------------------------------------------
 # 4. Storage & WiredTiger Tuning

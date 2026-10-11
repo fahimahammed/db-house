@@ -26,6 +26,7 @@
       community.general.ufw:
         rule: allow
         interface: lo
+        direction: in
 
     - name: Allow MongoDB port {{ mongo_port }} from cluster peers and authorized app servers
       community.general.ufw:
