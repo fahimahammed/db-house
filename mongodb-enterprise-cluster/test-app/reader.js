@@ -1,9 +1,9 @@
 /**
  * ==============================================================================
- * Terminal 2: Continuous Live Reader (Routes to SECONDARY)
+ * Terminal 2: Continuous Live Reader (Failover-Resilient)
  * ==============================================================================
- * Continuously polls and reads the latest transactions from the Secondary nodes.
- * Proves read/write splitting and shows real-time replication sync.
+ * Continuously reads from Secondary nodes (or fallback to new Primary).
+ * Tracks topology changes and proves read availability during primary failover.
  */
 
 const fs = require('fs');
@@ -22,7 +22,7 @@ try {
   }
 } catch (e) {}
 
-const uri = process.env.MONGO_URI || "mongodb://appUser:AppUserSecret2026!@18.143.176.226:27017,13.250.104.67:27017,18.141.4.93:27017/ecommerce_db?replicaSet=rs-prod-01&authSource=ecommerce_db&readPreference=secondaryPreferred";
+const uri = process.env.MONGO_URI || "mongodb://appUser:AppUserSecret2026!@18.143.176.226:27017,13.250.104.67:27017,18.141.4.93:27017/ecommerce_db?replicaSet=rs-prod-01&authSource=ecommerce_db&readPreference=secondaryPreferred&retryWrites=true";
 
 async function runReader() {
   console.log("================================================================================");
@@ -33,7 +33,8 @@ async function runReader() {
 
   const client = new MongoClient(uri, {
     monitorCommands: true,
-    serverSelectionTimeoutMS: 5000,
+    retryReads: true,
+    serverSelectionTimeoutMS: 15000,
   });
 
   let activeServer = "CONNECTING...";
@@ -64,10 +65,10 @@ async function runReader() {
         const syncStatus = isNew ? "⚡ SYNCED" : "   IDLE  ";
         console.log(`[${timeStr}] 📖 [READ <- ${activeServer}] [${syncStatus}] Seq #${doc.seq.toString().padStart(4, '0')} | ${doc.item} (\$${doc.amount}) | Read Latency: ${duration}ms`);
       } else {
-        console.log(`[${timeStr}] 📖 [READ <- ${activeServer}] Waiting for first write from Terminal 1...`);
+        console.log(`[${timeStr}] 📖 [READ <- ${activeServer}] Waiting for writes...`);
       }
     } catch (err) {
-      console.error(`❌ [READ FAILED] -> ${err.message}`);
+      console.warn(`⚠️  [READ RETRYING] -> ${err.message}`);
     }
   }, 1000);
 }

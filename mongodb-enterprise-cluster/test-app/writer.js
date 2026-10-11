@@ -1,9 +1,9 @@
 /**
  * ==============================================================================
- * Terminal 1: Continuous Live Writer (Routes to PRIMARY)
+ * Terminal 1: Continuous Live Writer (Failover-Resilient)
  * ==============================================================================
  * Continuously writes new transactions into the MongoDB Enterprise Cluster.
- * Monitors connection and visibly proves all writes go to PRIMARY.
+ * Automatically tracks failover, elections, and primary node handoffs in real-time.
  */
 
 const fs = require('fs');
@@ -26,20 +26,39 @@ const uri = process.env.MONGO_URI || "mongodb://appUser:AppUserSecret2026!@18.14
 
 async function runWriter() {
   console.log("================================================================================");
-  console.log(" ✏️  TERMINAL 1: CONTINUOUS WRITER ACTIVE");
+  console.log(" ✏️  TERMINAL 1: FAILOVER-RESILIENT LIVE WRITER");
   console.log(" Connecting to Cluster: " + uri);
   console.log("================================================================================\n");
 
   const client = new MongoClient(uri, {
     monitorCommands: true,
     retryWrites: true,
-    serverSelectionTimeoutMS: 5000,
+    retryReads: true,
+    serverSelectionTimeoutMS: 15000, // Allows 15s for leader election during chaos
   });
 
   let activeServer = "CONNECTING...";
   client.on('commandStarted', (event) => {
     if (['insert', 'update'].includes(event.commandName.toLowerCase())) {
       activeServer = event.address;
+    }
+  });
+
+  // Track topology changes and elections live
+  let previousPrimary = null;
+  client.on('topologyDescriptionChanged', (event) => {
+    const newDesc = event.newDescription;
+    const currentPrimary = Array.from(newDesc.servers.values()).find(s => s.type === 'RSPrimary');
+
+    if (currentPrimary && currentPrimary.address !== previousPrimary) {
+      if (previousPrimary) {
+        console.log(`\n================================================================================`);
+        console.log(` 🚨 FAILOVER DETECTED! Primary shifted: ${previousPrimary} ➔ ${currentPrimary.address}`);
+        console.log(`================================================================================\n`);
+      } else {
+        console.log(`📌 Current Cluster Primary: ${currentPrimary.address}`);
+      }
+      previousPrimary = currentPrimary.address;
     }
   });
 
@@ -60,21 +79,13 @@ async function runWriter() {
         timestamp: new Date()
       };
 
-      const result = await col.insertOne(payload, { writeConcern: { w: 'majority' } });
+      await col.insertOne(payload, { writeConcern: { w: 'majority' } });
       const duration = Date.now() - startTime;
       const timeStr = new Date().toLocaleTimeString();
 
       console.log(`[${timeStr}] ✏️  [WRITE -> ${activeServer}] Seq #${seq.toString().padStart(4, '0')} | ${payload.item} (\$${payload.amount}) | Latency: ${duration}ms`);
     } catch (err) {
-      console.error(`❌ [WRITE FAILED] Seq #${seq} -> ${err.message}`);
-      if (seq === 1 && client.topology) {
-        console.log("\n🔍 Topology Diagnostic (Why servers were not selected):");
-        for (const [address, server] of client.topology.description.servers) {
-          console.log(`   -> Host [${address}]: Type=${server.type} | Error=${server.error?.message || 'none'}`);
-        }
-        console.log("\n👉 If hosts show Private IPs (10.0.x.x) or cannot be reached from outside AWS,");
-        console.log("   run 'ansible-playbook playbooks/reconfig_public_ips.yml' to switch cluster to Public IPs.\n");
-      }
+      console.warn(`⚠️  [WAITING FOR NEW PRIMARY] Seq #${seq} -> ${err.message}`);
     }
   }, 1000);
 }
