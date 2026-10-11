@@ -52,13 +52,29 @@
   run_once: true
   become: true
   tasks:
-    - name: Set Feature Compatibility Version to {{ target_feature_compatibility_version }}
+    - name: Wait for replica set to elect a primary and stabilize
       ansible.builtin.shell: >
         mongosh --port {{ mongo_port }} -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --authenticationDatabase admin --quiet --eval '
-          let res = db.adminCommand({ setFeatureCompatibilityVersion: "{{ target_feature_compatibility_version }}" });
+          let status = rs.status();
+          let primary = status.members.find(m => m.state === 1);
+          if (!primary) throw new Error("No primary currently elected");
+          let unsynced = status.members.filter(m => m.state !== 1 && m.state !== 2);
+          if (unsynced.length > 0) throw new Error("Nodes still syncing: " + JSON.stringify(unsynced.map(m => m.name)));
+          print("STABLE_PRIMARY:" + primary.name);
+        '
+      register: cluster_stable
+      until: cluster_stable.rc == 0
+      retries: 30
+      delay: 3
+      changed_when: false
+
+    - name: Set Feature Compatibility Version to {{ target_feature_compatibility_version }}
+      ansible.builtin.shell: >
+        mongosh "mongodb://{{ mongo_admin_user }}:{{ mongo_admin_password }}@127.0.0.1:{{ mongo_port }}/admin?replicaSet={{ mongo_replset_name }}" --quiet --eval '
+          let res = db.adminCommand({ setFeatureCompatibilityVersion: "{{ target_feature_compatibility_version }}", confirm: true });
           print("FCV_UPDATED: " + JSON.stringify(res));
         '
 
     - name: Final Upgrade Confirmation
       ansible.builtin.debug:
-        msg: "🎉 Zero-downtime rolling upgrade to MongoDB {{ target_upgrade_version }} completed successfully!"
+        msg: "🎉 Zero-downtime rolling upgrade to MongoDB {{ target_upgrade_version }} completed successfully! FCV set to {{ target_feature_compatibility_version }}."
