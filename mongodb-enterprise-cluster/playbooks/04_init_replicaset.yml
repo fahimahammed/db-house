@@ -28,29 +28,48 @@
       delay: 2
       changed_when: false
 
-    - name: Provision Cluster Admin (clusterAdmin) & Application (appUser) Users
+    - name: Create Cluster Administrator User (clusterAdmin)
       ansible.builtin.shell: >
         mongosh --port {{ mongo_port }} admin --quiet --eval '
-          if (!db.getUser("{{ mongo_admin_user }}")) {
+          try {
             db.createUser({
               user: "{{ mongo_admin_user }}",
               pwd: "{{ mongo_admin_password }}",
               roles: ["root", "clusterAdmin", "userAdminAnyDatabase"]
             });
             print("ADMIN_CREATED");
+          } catch(e) {
+            if (e.message && e.message.includes("already exists")) {
+              print("ADMIN_EXISTS");
+            } else {
+              throw e;
+            }
           }
+        '
+      register: create_admin_out
+      changed_when: "'ADMIN_CREATED' in create_admin_out.stdout"
+
+    - name: Create Application User (appUser) on {{ mongo_app_db }}
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
           let appDb = db.getSiblingDB("{{ mongo_app_db }}");
-          if (!appDb.getUser("{{ mongo_app_user }}")) {
+          try {
             appDb.createUser({
               user: "{{ mongo_app_user }}",
               pwd: "{{ mongo_app_password }}",
               roles: [{ role: "readWrite", db: "{{ mongo_app_db }}" }]
             });
             print("APP_USER_CREATED");
+          } catch(e) {
+            if (e.message && e.message.includes("already exists")) {
+              print("APP_USER_EXISTS");
+            } else {
+              throw e;
+            }
           }
         '
-      register: user_provision_out
-      changed_when: "'CREATED' in user_provision_out.stdout"
+      register: create_app_user_out
+      changed_when: "'APP_USER_CREATED' in create_app_user_out.stdout"
 
     - name: Add Secondary Nodes to Replica Set
       ansible.builtin.shell: >
