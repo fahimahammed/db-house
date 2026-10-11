@@ -22,69 +22,9 @@ An enterprise-grade, fully automated **MongoDB 7.0 / 8.0 Multi-AZ Replica Set** 
 
 ---
 
-## 2. Complete System Architecture & Network Topology
+## 2.  System Architecture
 
-```mermaid
-flowchart TB
-    subgraph ClientZone["Client Application Layer (Authorized Only)"]
-        App1["App Server 1 (API Gateway)<br/>IP: 10.0.10.15"]
-        App2["App Server 2 (Worker)<br/>IP: 10.0.10.16"]
-        SubnetApps["Microservice Subnet<br/>CIDR: 103.76.154.0/24"]
-    end
-
-    subgraph BlockedZone["Unauthorized External Traffic"]
-        Attacker["Unauthorized Internet / External IP"]
-    end
-
-    subgraph ClusterMesh["MongoDB Multi-AZ Enterprise Replica Set ('rs-prod-01')"]
-        direction TB
-
-        subgraph Node1["Node 1: mongo-01 (Priority 2) - AZ: ap-southeast-1a"]
-            UFW1["Kernel Firewall (UFW)<br/>Default: DENY INCOMING"]
-            DB1["mongod :27017<br/>Role: PRIMARY<br/>WiredTiger Engine (Cache: 1GB)"]
-            UFW1 -->|Port 27017 (Local Allow)| DB1
-        end
-
-        subgraph Node2["Node 2: mongo-02 (Priority 1) - AZ: ap-southeast-1b"]
-            UFW2["Kernel Firewall (UFW)<br/>Default: DENY INCOMING"]
-            DB2["mongod :27017<br/>Role: SECONDARY<br/>🕒 Automated Backup Engine"]
-            Timer2["systemd timer: mongodb-backup<br/>Schedule: Daily 02:00 UTC<br/>Storage: /var/backups/mongodb"]
-            UFW2 -->|Port 27017 (Local Allow)| DB2
-            Timer2 -.->|Zero-I/O mongodump --oplog| DB2
-        end
-
-        subgraph Node3["Node 3: mongo-03 (Priority 1) - AZ: ap-southeast-1c"]
-            UFW3["Kernel Firewall (UFW)<br/>Default: DENY INCOMING"]
-            DB3["mongod :27017<br/>Role: SECONDARY<br/>🛡️ DR Replica & Read Scaling"]
-            UFW3 -->|Port 27017 (Local Allow)| DB3
-        end
-    end
-
-    subgraph AdminLayer["Control & Orchestration Layer"]
-        AnsibleCtrl["Ansible Controller<br/>Key: keys/MyKeyPair.pem<br/>Keyfile: security/mongo-keyfile"]
-    end
-
-    %% Security Boundaries
-    Attacker -.->|Port 27017: DROP (Connection Refused/Silent Drop)| UFW1
-    Attacker -.->|Port 27017: DROP (Connection Refused/Silent Drop)| UFW2
-    Attacker -.->|Port 27017: DROP (Connection Refused/Silent Drop)| UFW3
-
-    %% Allowed Traffic
-    App1 ==>|Allowed Port 27017 (Writes: w:majority)| UFW1
-    App2 ==>|Allowed Port 27017 (Writes: w:majority)| UFW1
-    SubnetApps ==>|Allowed Port 27017 (Reads: secondaryPreferred)| UFW2
-    SubnetApps ==>|Allowed Port 27017 (Reads: secondaryPreferred)| UFW3
-
-    %% Internal Intra-Cluster Sync
-    DB1 <===>|Internal Replication & Heartbeats (Keyfile Auth)| DB2
-    DB2 <===>|Internal Replication & Heartbeats (Keyfile Auth)| DB3
-    DB1 <===>|Internal Replication & Heartbeats (Keyfile Auth)| DB3
-
-    %% Orchestration
-    AnsibleCtrl -.->|SSH :22 (Playbook Automation)| UFW1
-    AnsibleCtrl -.->|SSH :22 (Playbook Automation)| UFW2
-    AnsibleCtrl -.->|SSH :22 (Playbook Automation)| UFW3
-```
+![Architecture](./assets/arch.png)
 
 ---
 
@@ -109,11 +49,11 @@ sequenceDiagram
         P->>S2: Stream Oplog Entry
     end
     S1-->>P: Acknowledge write applied
-    P-->>App: ✅ Write Confirmed (Majority Quorum Met)
+    P-->>App: Write Confirmed (Majority Quorum Met)
 
     Note over App,S2: Read Request (readPreference: secondaryPreferred)
     App->>S2: db.collection.find({ item: "A" })
-    S2-->>App: ✅ Return Documents (Zero impact on Primary CPU)
+    S2-->>App: Return Documents (Zero impact on Primary CPU)
 ```
 
 **How the System Handles This:**
@@ -128,16 +68,16 @@ Database port `27017` is tightly bound so that unauthorized external IPs cannot 
 
 ```mermaid
 flowchart TD
-    ClientReq["Incoming Network Connection on Port 27017"] --> KernelCheck{"Linux Kernel (UFW Rules Check)"}
+    ClientReq["Incoming Network Connection on Port 27017"] --> KernelCheck{"Linux Kernel UFW Rules Check"}
     
-    KernelCheck -->|"Source IP matches mongo_allowed_app_clients<br/>or Cluster Peer Node IP"| AllowRule["Rule: ALLOW IN<br/>Packet forwarded to mongod"]
-    KernelCheck -->|"Source IP is NOT in allowed list<br/>(External IP / Internet Attacker)"| DenyRule["Rule: DEFAULT DENY<br/>Packet DROPPED immediately"]
+    KernelCheck -->|"Allowed Application IP or Cluster Peer"| AllowRule["Rule: ALLOW IN<br/>Packet forwarded to mongod"]
+    KernelCheck -->|"Unauthorized IP or External Attacker"| DenyRule["Rule: DEFAULT DENY<br/>Packet DROPPED immediately"]
 
     AllowRule --> DBAuth{"mongod SCRAM-SHA-256 Auth"}
-    DBAuth -->|"Valid Credentials"| ConnOK["✅ Connection Established (Read/Write Allowed)"]
-    DBAuth -->|"Invalid Credentials"| ConnAuthFail["❌ 401 Unauthorized Rejected"]
+    DBAuth -->|"Valid Credentials"| ConnOK["Connection Established"]
+    DBAuth -->|"Invalid Credentials"| ConnAuthFail["Authentication Failed 401"]
 
-    DenyRule --> Blocked["🛑 Connection Timed Out / Dropped at Kernel Level"]
+    DenyRule --> Blocked["Connection Timed Out or Dropped"]
 ```
 
 **How the System Handles This:**
@@ -158,7 +98,7 @@ sequenceDiagram
     participant S1 as mongo-02 (SECONDARY)
     participant S2 as mongo-03 (SECONDARY)
 
-    Note over P: 💥 Hardware Failure / Kernel Panic / Network Partition
+    Note over P: Hardware Failure / Kernel Panic / Network Partition
     rect rgb(255, 230, 230)
     S1-xP: Heartbeat check fails (Timeout: 2s)
     S2-xP: Heartbeat check fails (Timeout: 2s)
@@ -174,7 +114,7 @@ sequenceDiagram
     P--xApp: Network Timeout / Server Selection Error
     Note over App: Driver detects topology change via SDAM
     App->>S1: Automatic Write Retry (retryWrites=true)
-    S1-->>App: ✅ Write Confirmed on New Primary (Zero Data Loss)
+    S1-->>App: Write Confirmed on New Primary (Zero Data Loss)
 
     Note over P,S1: Recovery Phase
     Note over P: mongo-01 reboots and comes back online
@@ -209,7 +149,7 @@ flowchart TD
     
     Step6 --> OptionalFetch{"Manual Flag: fetch_to_controller?"}
     OptionalFetch -->|"true"| ControllerDownload["Download archive to Ansible Controller local directory"]
-    OptionalFetch -->|"false"| Finish["✅ Backup Stored Securely on Secondary Node"]
+    OptionalFetch -->|"false"| Finish["Backup Stored Securely on Secondary Node"]
 ```
 
 **How the System Handles This:**
@@ -231,9 +171,9 @@ sequenceDiagram
     participant B as /var/backups/mongodb (Latest Archive)
     participant Rest as Restore Engine (mongorestore)
 
-    Note over P: ⚠️ 14:00:00 UTC - Base Backup Created
+    Note over P: 14:00:00 UTC - Base Backup Created
     Note over P: 14:15:30 UTC - 10,000 Orders Processed
-    Note over P: 💥 14:20:00 UTC - Accidental: db.orders.drop() executed! (T_drop = 1712839200:1)
+    Note over P: 14:20:00 UTC - Accidental: db.orders.drop() executed! (T_drop = 1712839200:1)
 
     Admin->>P: Step 1: Query oplog to find exact drop timestamp (T_drop)
     P-->>Admin: Returns timestamp: 1712839200:1 (cmd: { drop: "orders" })
@@ -243,8 +183,8 @@ sequenceDiagram
     Rest->>P: Restore collections with --drop
     Note over Rest,P: Step 3: Replay oplog entries chronologically
     Rest->>P: Replay writes from 14:00:01 to 14:19:59 UTC
-    Note over Rest: 🛑 Halt replay immediately BEFORE drop timestamp 1712839200:1!
-    Rest-->>Admin: ✅ Recovery Complete: All 10,000 orders restored! 0 dropped data.
+    Note over Rest: Halt replay immediately BEFORE drop timestamp 1712839200:1!
+    Rest-->>Admin: Recovery Complete: All 10,000 orders restored! 0 dropped data.
 ```
 
 **How the System Handles This:**
@@ -287,7 +227,7 @@ sequenceDiagram
 
     Note over S1: Phase 5: Finalize Feature Compatibility Version
     S1->>S1: setFeatureCompatibilityVersion('8.0')
-    Note over App,S1: 🎉 Full Cluster Running MongoDB 8.0 with Zero Downtime!
+    Note over App,S1: Full Cluster Running MongoDB 8.0 with Zero Downtime!
 ```
 
 **How the System Handles This:**
