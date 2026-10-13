@@ -8,7 +8,9 @@
     "writer": "node writer.js",
     "reader": "node reader.js",
     "resilience": "node failover-resilience-test.js",
-    "dr-test": "node disaster-recovery-test.js"
+    "dr-test": "node disaster-recovery-test.js",
+    "qan": "node qan-workload.js",
+    "qan:once": "node qan-workload.js --once"
   },
   "dependencies": {
     "mongodb": "^6.21.0"

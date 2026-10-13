@@ -399,3 +399,13 @@ mongodb-enterprise-cluster/
     ├── check-cluster-version.js               # Node.js cluster version inspector
     └── debug-connect.js                       # Connection string diagnostic tool
 ```
+
+## 6. Observability and Documentation Links
+
+Percona Monitoring and Management (PMM v2) provides query analytics (QAN), WiredTiger cache metrics, replication lag telemetry, and host resource tracking without opening inbound firewall ports on the database cluster.
+
+For full operational runbooks, architecture diagrams, and monitoring dashboards, refer to the guides below:
+
+* [docs/rs-prod-guide.md](docs/rs-prod-guide.md): Complete replica set architecture, high availability failover, automated secondary backups, PITR disaster recovery, and zero downtime rolling upgrades.
+* [docs/profiling-and-monitoring.md](docs/profiling-and-monitoring.md): Percona PMM server deployment, client setup, query profiler tuning, and dashboard references.
+

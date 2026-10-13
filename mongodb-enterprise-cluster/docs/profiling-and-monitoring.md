@@ -69,9 +69,15 @@ Generate real read and write queries from the test application:
 cd test-app
 npm run writer
 npm run reader
+npm run qan
 ```
 
 ## 3. Monitoring Dashboards
+
+### Query Analytics (QAN)
+This dashboard tracks query fingerprints, load breakdown, execution counts, and query latency across cluster nodes.
+
+![Query Analytics](../assets/QAN.png)
 
 ### Replica Set Summary
 This dashboard tracks primary status, secondary nodes, replication lag, and real-time opcounters for reads and writes.
@@ -88,3 +94,7 @@ This dashboard tracks CPU usage, memory utilization, disk IOPS, and network traf
 
 ![Node and OS Overview](../assets/node-overview.png)
 
+### PMM Query Analysis (QAN)
+QAN (Query Analytics) is a feature of PMM (Percona Monitoring and Management) that helps analyze database query performance.
+
+![QAN](../assets/QAN.png)
