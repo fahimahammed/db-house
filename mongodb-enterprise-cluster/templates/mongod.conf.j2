@@ -36,6 +36,7 @@ replication:
   oplogSizeMB: {{ mongo_oplog_size_mb }}
 
 operationProfiling:
-  mode: slowOp
-  slowOpThresholdMs: 100
+  mode: {{ mongo_profiling_mode | default('slowOp') }}
+  slowOpThresholdMs: {{ mongo_profiling_slow_ms | default(100) }}
+  slowOpSampleRate: {{ mongo_profiling_sample_rate | default(1.0) }}
 

@@ -1,0 +1,138 @@
+---
+# ==============================================================================
+# Playbook 12: Deploy Percona PMM Client on MongoDB Cluster Nodes
+# Integrates MongoDB Enterprise with Percona Monitoring and Management (PMM)
+# Enables Host Metrics, MongoDB Engine Metrics, and Live QAN (Query Profiler)
+# ==============================================================================
+
+- name: "Phase 12 - Deploy Percona PMM Client & Query Analytics Profiler"
+  hosts: mongodb_cluster
+  become: true
+  vars_files:
+    - ../inventory/group_vars/all.yml
+
+  tasks:
+    - name: 12.1 Assert PMM Configuration Variables
+      ansible.builtin.assert:
+        that:
+          - pmm_server_host is defined
+          - pmm_server_host != "10.0.0.100" or force_pmm_deploy is defined
+        fail_msg: "Please configure 'pmm_server_host' in inventory/group_vars/all.yml with your actual PMM Server IP!"
+      ignore_errors: true
+      register: pmm_var_check
+
+    - name: Display PMM Deployment Notice
+      ansible.builtin.debug:
+        msg: "Targeting PMM Server: https://{{ pmm_server_host }}:{{ pmm_server_port }}"
+
+    - name: 12.2 Ensure Prerequisites (curl, gnupg, lsb-release) are installed
+      ansible.builtin.apt:
+        name:
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+        update_cache: true
+
+    - name: 12.3 Download and Install Percona Release Package
+      ansible.builtin.apt:
+        deb: "https://repo.percona.com/apt/percona-release_latest.generic_all.deb"
+        state: present
+
+    - name: 12.4 Enable Percona PMM2 Client Repository
+      ansible.builtin.command: percona-release enable pmm2-client release
+      register: percona_repo_out
+      changed_when: "'enabled' in percona_repo_out.stdout"
+
+    - name: 12.5 Install pmm2-client package
+      ansible.builtin.apt:
+        name: pmm2-client
+        state: present
+        update_cache: true
+
+    - name: 12.6 Check PMM Agent Status
+      ansible.builtin.command: pmm-admin status
+      register: pmm_agent_status
+      failed_when: false
+      changed_when: false
+
+    - name: 12.7 Register and Configure PMM Client with PMM Server
+      ansible.builtin.command: >
+        pmm-admin config
+        --server-insecure-tls
+        --server-url="https://{{ pmm_admin_user }}:{{ pmm_admin_password }}@{{ pmm_server_host }}:{{ pmm_server_port }}"
+        --force
+      register: pmm_config_result
+      changed_when: "'Connected to PMM Server' in pmm_config_result.stdout or 'Agent is registered' in pmm_config_result.stdout"
+
+    - name: 12.8 Ensure PMM Monitoring User exists on the Active Primary Node
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          let hello = db.hello();
+          if (hello.isWritablePrimary) {
+            let adminDb = db.getSiblingDB("admin");
+            try {
+              adminDb.createUser({
+                user: "{{ pmm_mongo_user | default("pmm_user") }}",
+                pwd: "{{ pmm_mongo_password }}",
+                roles: [
+                  { role: "clusterMonitor", db: "admin" },
+                  { role: "read", db: "local" },
+                  { role: "readAnyDatabase", db: "admin" }
+                ]
+              });
+              print("PMM_USER_CREATED");
+            } catch(e) {
+              adminDb.updateUser("{{ pmm_mongo_user | default("pmm_user") }}", {
+                pwd: "{{ pmm_mongo_password }}",
+                roles: [
+                  { role: "clusterMonitor", db: "admin" },
+                  { role: "read", db: "local" },
+                  { role: "readAnyDatabase", db: "admin" }
+                ]
+              });
+              print("PMM_USER_UPDATED");
+            }
+          } else {
+            print("SKIPPED_SECONDARY_NODE");
+          }
+        '
+      register: pmm_user_ensure_out
+      changed_when: "'PMM_USER_CREATED' in pmm_user_ensure_out.stdout or 'PMM_USER_UPDATED' in pmm_user_ensure_out.stdout"
+
+    - name: Allow user replication to propagate to all nodes
+      ansible.builtin.pause:
+        seconds: 2
+
+    - name: 12.9 Check if MongoDB Service is already monitored in PMM
+      ansible.builtin.command: pmm-admin list
+      register: pmm_list_result
+      changed_when: false
+
+    - name: 12.10 Register MongoDB Service with QAN Profiler Query Source
+      ansible.builtin.command: >
+        pmm-admin add mongodb
+        --username="{{ pmm_mongo_user }}"
+        --password="{{ pmm_mongo_password }}"
+        --authentication-database=admin
+        --host="127.0.0.1"
+        --port="{{ mongo_port }}"
+        --query-source=profiler
+        --environment="{{ pmm_environment | default('production') }}"
+        --cluster="{{ mongo_replset_name }}"
+        --service-name="{{ inventory_hostname }}"
+      when: "inventory_hostname not in pmm_list_result.stdout"
+      register: pmm_add_mongo_result
+      changed_when: "'MongoDB Service added' in pmm_add_mongo_result.stdout"
+
+    - name: 12.11 Retrieve PMM Monitoring Summary
+      ansible.builtin.command: pmm-admin list
+      register: pmm_final_list
+      changed_when: false
+
+    - name: 12.12 Display PMM Active Monitoring Services
+      ansible.builtin.debug:
+        msg:
+          - "🎉 Percona PMM Client successfully configured on {{ inventory_hostname }}!"
+          - "{{ pmm_final_list.stdout_lines }}"
+

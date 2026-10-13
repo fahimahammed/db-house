@@ -69,7 +69,56 @@
           }
         '
       register: create_app_user_out
-      changed_when: "'APP_USER_CREATED' in create_app_user_out.stdout"
+    - name: Create Dedicated PMM Monitoring User (pmm_user) on admin
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          let adminDb = db.getSiblingDB("admin");
+          try {
+            adminDb.createUser({
+              user: "{{ pmm_mongo_user | default("pmm_user") }}",
+              pwd: "{{ pmm_mongo_password | default("PmmSecurePassword2026!") }}",
+              roles: [
+                { role: "clusterMonitor", db: "admin" },
+                { role: "read", db: "local" },
+                { role: "readAnyDatabase", db: "admin" }
+              ]
+            });
+            print("PMM_USER_CREATED");
+          } catch(e) {
+            if (e.message && e.message.includes("already exists")) {
+              print("PMM_USER_EXISTS");
+            } else {
+              throw e;
+            }
+          }
+        '
+      register: create_pmm_user_out
+      changed_when: "'PMM_USER_CREATED' in create_pmm_user_out.stdout"
+
+    - name: Configure Profiler and system.profile Collection on {{ mongo_app_db }}
+      ansible.builtin.shell: >
+        mongosh --port {{ mongo_port }} admin -u "{{ mongo_admin_user }}" -p "{{ mongo_admin_password }}" --quiet --eval '
+          let targetDb = db.getSiblingDB("{{ mongo_app_db }}");
+          try {
+            targetDb.setProfilingLevel(0);
+            if (!targetDb.getCollectionNames().includes("system.profile")) {
+              targetDb.createCollection("system.profile", {
+                capped: true,
+                size: {{ mongo_profiling_capped_size_mb | default(50) }} * 1024 * 1024
+              });
+              print("PROFILE_COLLECTION_CREATED");
+            }
+            targetDb.setProfilingLevel(1, {
+              slowms: {{ mongo_profiling_slow_ms | default(100) }},
+              sampleRate: {{ mongo_profiling_sample_rate | default(1.0) }}
+            });
+            print("PROFILING_CONFIGURED");
+          } catch(e) {
+            print("PROFILING_ERROR: " + e.message);
+          }
+        '
+      register: profiler_setup_out
+      changed_when: "'PROFILE_COLLECTION_CREATED' in profiler_setup_out.stdout"
 
     - name: Add Secondary Nodes to Replica Set
       ansible.builtin.shell: >

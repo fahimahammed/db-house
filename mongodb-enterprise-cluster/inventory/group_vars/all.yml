@@ -84,3 +84,29 @@ backup_compression: "gzip"
 # ------------------------------------------------------------------------------
 dr_restore_temp_dir: "/tmp/mongo_restore"
 
+# ------------------------------------------------------------------------------
+# 8. Database Profiling Configuration
+# ------------------------------------------------------------------------------
+mongo_profiling_mode: "slowOp"
+mongo_profiling_slow_ms: 100       # Capture operations taking longer than 100ms
+mongo_profiling_sample_rate: 1.0   # 1.0 = 100% of slow operations
+mongo_profiling_capped_size_mb: 50 # 50 MB capped system.profile collection
+
+# ------------------------------------------------------------------------------
+# 9. Percona PMM (Monitoring and Management) Configuration
+# ------------------------------------------------------------------------------
+pmm_enabled: true
+# Private IP of the dedicated PMM Server (10.0.4.105 inside VPC)
+pmm_server_host: "10.0.4.105"
+pmm_server_port: 443
+pmm_server_insecure_tls: true
+
+# PMM Server Web / API credentials
+pmm_admin_user: "admin"
+pmm_admin_password: "PmmAdmin2026"
+
+# MongoDB Monitoring user credentials (managed by PMM Client)
+pmm_mongo_user: "pmm_user"
+pmm_mongo_password: "PmmSecurePassword2026"
+pmm_environment: "production"
+

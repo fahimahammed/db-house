@@ -18,6 +18,7 @@ An enterprise-grade, fully automated **MongoDB 7.0 / 8.0 Multi-AZ Replica Set** 
 | **Zero-Downtime Rolling Upgrades** | Sequential node-by-node binary upgrades ($7.0 \rightarrow 8.0$), controlled Primary stepdown (`rs.stepDown`), and FCV finalization. | Version upgrades without application interruption or query downtime. | [`playbooks/09_rolling_upgrade.yml`](playbooks/09_rolling_upgrade.yml)<br>[`scripts/rolling_upgrade_check.sh`](scripts/rolling_upgrade_check.sh) |
 | **Cross-VPC / Remote Node Reconfiguration** | Automated dynamic replica set reconfiguration supporting public WAN IPs and multi-cloud nodes. | Seamless connection when application servers reside in external VPCs or different cloud providers. | [`playbooks/reconfig_public_ips.yml`](playbooks/reconfig_public_ips.yml) |
 | **Automated Replication Verification** | Automated document injection on Primary with assertion of secondary propagation in $< 2\text{s}$. | Guarantees replication health and validates replication lag across all nodes. | [`playbooks/10_test_replication_sync.yml`](playbooks/10_test_replication_sync.yml)<br>[`scripts/verify_cluster.sh`](scripts/verify_cluster.sh) |
+| **Real-Time Profiling & PMM Observability** | Percona PMM v2 integration with live Query Analytics (QAN), WiredTiger cache telemetry, and MongoDB profiler. | Real-time slow query discovery, `COLLSCAN` index miss detection, replication lag alerting with 0% firewall exposure. | [`playbooks/12_install_pmm_client.yml`](playbooks/12_install_pmm_client.yml)<br>[`scripts/verify_pmm.sh`](scripts/verify_pmm.sh)<br>[`PERCONA_PMM_SETUP_GUIDE.md`](PERCONA_PMM_SETUP_GUIDE.md) |
 | **Resilience & Failover Test Suite** | Production Node.js client harness for read/write splitting, continuous write resilience, and PITR validation. | End-to-end driver-level testing under real application traffic conditions. | [`test-app/`](test-app/) |
 
 ---
@@ -238,6 +239,34 @@ sequenceDiagram
 
 ---
 
+### Situation 7: Live Database Profiling & Query Analytics with Percona PMM
+Real-time database performance telemetry, continuous query execution analysis, and anomaly detection without opening inbound firewall ports on the database cluster.
+
+```mermaid
+flowchart LR
+    subgraph MongoNodes["MongoDB Replica Set Nodes"]
+        direction TB
+        M["mongod Engine<br/>(operationProfiling: slowOp)"] -->|"system.profile & serverStatus"| PA["pmm-agent (PMM Client)"]
+    end
+
+    subgraph PMMServer["PMM Server (Dedicated Host)"]
+        direction TB
+        QAN["ClickHouse<br/>(Query Analytics - QAN)"]
+        VM["VictoriaMetrics<br/>(Time-Series Metrics)"]
+        Graf["Grafana Dashboards<br/>(Replica Lag, WiredTiger Cache)"]
+    end
+
+    PA -->|"Push Telemetry via TLS (:443)"| PMMServer
+```
+
+**How the System Handles This:**
+1. **Zero-Inbound Firewall Exposure:** Unlike traditional pull-based scrapers, `pmm-agent` connects out to the central PMM Server on port `443` (TLS). The MongoDB database nodes require **zero inbound monitoring ports** opened.
+2. **Real-Time Query Analytics (QAN):** MongoDB profiler (`system.profile`) operations are streamed and fingerprint-indexed in ClickHouse, allowing instant detection of unindexed queries (`COLLSCAN`) and latency anomalies.
+3. **Engine-Level Telemetry:** Monitors WiredTiger dirty cache ratio, checkpoint execution, oplog window headroom, and replication lag across all replica set members.
+4. **Comprehensive Documentation:** Full operational details in [`PERCONA_PMM_SETUP_GUIDE.md`](PERCONA_PMM_SETUP_GUIDE.md).
+
+---
+
 ## 4. Master Command Cheat Sheet
 
 ### Phase 1: Initial Cluster Provisioning & Deployment
@@ -298,6 +327,13 @@ sequenceDiagram
 | :--- | :--- | :--- |
 | **Complete Cluster Teardown** | `ansible-playbook playbooks/99_teardown_cluster.yml` | Stop services, purge packages, wipe `/var/lib/mongodb`, delete keyfiles, and reset firewall rules. |
 
+### Phase 9: Real-Time Observability & Query Profiling (Percona PMM)
+| Task | Exact Command | Purpose |
+| :--- | :--- | :--- |
+| **Deploy PMM Server (Docker Host)** | `ansible-playbook playbooks/13_deploy_pmm_server.yml`<br>*(or `cd monitoring-stack && docker compose up -d`)* | Deploys Percona PMM Server v2 with VictoriaMetrics, ClickHouse QAN, and Grafana. |
+| **Deploy PMM Client & Query Profiler** | `ansible-playbook playbooks/12_install_pmm_client.yml` | Installs `pmm2-client` across all nodes and registers MongoDB with `--query-source=profiler`. |
+| **Verify PMM Telemetry & Profiler** | `./scripts/verify_pmm.sh` | Checks agent status, validates registered services, and generates a test query to confirm profiler capture. |
+
 ---
 
 ## 5. Verified Repository Structure
@@ -307,19 +343,24 @@ Every file in this repository is active and serves a dedicated purpose:
 ```
 mongodb-enterprise-cluster/
 ├── README.md                                  # Complete enterprise documentation and architecture guide
+├── PERCONA_PMM_SETUP_GUIDE.md                 # Percona PMM architecture & deployment guide
+├── MONGODB_CONFIG_FILES_AND_CHANGES.md        # MongoDB config files & tuning breakdown
+├── MONITORING_AND_PROFILING_PLAN.md           # Telemetry architecture & profiling strategy
 ├── ansible.cfg                                # Ansible configuration (inventory path, SSH tuning)
 ├── inventory/
-│   ├── hosts.ini                              # Node inventory (Primary, Secondaries, IPs, priorities)
+│   ├── hosts.ini                              # Node inventory (Primary, Secondaries, Monitoring Server)
 │   └── group_vars/
-│       └── all.yml                            # Global cluster variables, credentials, firewall IPs
+│       └── all.yml                            # Global cluster variables, credentials, PMM settings
 ├── keys/
 │   └── MyKeyPair.pem                          # SSH private key for node management (chmod 600)
+├── monitoring-stack/
+│   └── docker-compose.yml                     # Docker Compose file for Percona PMM Server v2
 ├── playbooks/
 │   ├── site.yml                               # Master deployment orchestration playbook
 │   ├── 01_system_prep.yml                     # OS tuning, swap, kernel parameters
 │   ├── 02_install_mongodb.yml                 # MongoDB repository & package installation
 │   ├── 03_configure_mongodb.yml               # mongod.conf deployment & keyfile sync
-│   ├── 04_init_replicaset.yml                 # Replica set initialization & RBAC creation
+│   ├── 04_init_replicaset.yml                 # Replica set initialization & RBAC creation (inc. pmm_user)
 │   ├── 05_setup_firewall_access.yml           # Kernel firewall (UFW) access control binding
 │   ├── 06_setup_automated_backups.yml         # Secondary-targeted systemd timer backup setup
 │   ├── 07_trigger_manual_backup.yml           # On-demand snapshot trigger & controller fetch
@@ -327,6 +368,8 @@ mongodb-enterprise-cluster/
 │   ├── 09_rolling_upgrade.yml                 # Zero-downtime rolling version upgrade (7.0 -> 8.0)
 │   ├── 10_test_replication_sync.yml           # Automated replication latency verification
 │   ├── 11_test_client_access_control.yml      # Firewall state and policy assertion
+│   ├── 12_install_pmm_client.yml              # Percona PMM Client & query profiler deployment
+│   ├── 13_deploy_pmm_server.yml               # Automated PMM Server Docker deployment
 │   ├── reconfig_public_ips.yml                # Dynamic replica set public IP reconfiguration
 │   ├── 99_teardown_cluster.yml                # Cluster wipe and clean state reset
 │   └── tasks/
@@ -336,11 +379,12 @@ mongodb-enterprise-cluster/
 │   ├── rolling_upgrade_check.sh               # CLI helper for checking version and FCV
 │   ├── test_client_access.sh                  # CLI network connectivity and firewall tester
 │   ├── trigger_backup.sh                      # CLI helper to trigger immediate backup
-│   └── verify_cluster.sh                      # CLI helper for replica set health & lag check
+│   ├── verify_cluster.sh                      # CLI helper for replica set health & lag check
+│   └── verify_pmm.sh                          # CLI helper to verify PMM status & test query capture
 ├── security/
 │   └── mongo-keyfile                          # 1024-bit internal cluster authentication key
 ├── templates/
-│   ├── mongod.conf.j2                         # Jinja2 template for MongoDB configuration
+│   ├── mongod.conf.j2                         # Jinja2 template for MongoDB configuration (with profiler)
 │   ├── mongodb-backup.service.j2              # Systemd service template for backups
 │   ├── mongodb-backup.timer.j2                # Systemd timer template for backup scheduling
 │   ├── mongodb_backup.sh.j2                   # Secondary backup script template with SHA-256

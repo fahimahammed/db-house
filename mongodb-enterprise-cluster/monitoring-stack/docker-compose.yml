@@ -1,0 +1,31 @@
+version: '3.8'
+
+# ==============================================================================
+# Percona Monitoring and Management (PMM) Server v2
+# Dedicated Monitoring Server Docker Compose Configuration
+# ==============================================================================
+
+services:
+  pmm-server:
+    image: percona/pmm-server:2
+    container_name: pmm-server
+    restart: always
+    ports:
+      - "80:80"     # HTTP (redirects to HTTPS)
+      - "443:443"   # HTTPS (Web UI & pmm-client gRPC connection)
+    volumes:
+      - pmm-data:/srv
+    environment:
+      # Initial admin password
+      - PMM_ADMIN_PASSWORD=PmmAdmin2026
+      # Disable telemetry if desired
+      - PERCONA_TELEMETRY_DISABLE=1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+volumes:
+  pmm-data:
+    name: pmm-data
