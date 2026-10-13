@@ -4,39 +4,7 @@
 
 This diagram shows how the three MongoDB replica set nodes connect to the dedicated PMM monitoring server.
 
-```mermaid
-flowchart TB
-    subgraph Cluster["MongoDB Replica Set rs-prod-01"]
-        direction TB
-
-        subgraph Node1["mongo-01 Primary"]
-            M1["mongod 27017<br/>profiling: slowOp"]
-            A1["pmm-agent client"]
-            M1 --> A1
-        end
-
-        subgraph Node2["mongo-02 Secondary"]
-            M2["mongod 27017<br/>profiling: slowOp"]
-            A2["pmm-agent client"]
-            M2 --> A2
-        end
-
-        subgraph Node3["mongo-03 Secondary"]
-            M3["mongod 27017<br/>profiling: slowOp"]
-            A3["pmm-agent client"]
-            M3 --> A3
-        end
-    end
-
-    subgraph MonitoringHost["Monitoring Server"]
-        direction TB
-        PMM["Percona PMM Server<br/>VictoriaMetrics, ClickHouse QAN, Grafana"]
-    end
-
-    A1 -->|"Push metrics and QAN (TLS 443)"| PMM
-    A2 -->|"Push metrics and QAN (TLS 443)"| PMM
-    A3 -->|"Push metrics and QAN (TLS 443)"| PMM
-```
+![monitoring-arch](../assets/monitoring-arch.png)
 
 ## 2. Essential Commands
 
